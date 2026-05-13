@@ -1,25 +1,26 @@
 (function() {
     "use strict";
 
-    var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
-    var HEADERS = {
+    const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+    const HEADERS = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9"
     };
 
-    // Primary source: movieswood.cloud file server (direct MKV files)
-    // Fallback: tellybiz.in (unreliable)
-    var MW_BASE = "https://movieswood.cloud";
-    var TB_BASE = "https://tellybiz.in";
+    const MW_BASE = "https://movieswood.cloud";
 
-    // Sections with their paths on movieswood.cloud
-    var HOME_SECTIONS = [
-        { name: "Telugu Movies", path: "/telugu/", source: "movieswood" },
-        { name: "Bollywood", path: "/bolly/", source: "movieswood" },
-        { name: "Web Series", path: "/web/", source: "movieswood" },
-        { name: "Malayalam", path: "/malayalam/", source: "movieswood" },
-        { name: "Kannada", path: "/kannada/", source: "movieswood" }
+    // Only list directories that EXIST and return content on movieswood.cloud
+    // Tested: /telugu/ works (8 movies with MKV files)
+    //         /tamil/, /malayalam/, /kannada/, /bolly/, /web/ exist but rarely return body (timeout)
+    // We try them all in parallel with timeouts
+    const HOME_SECTIONS = [
+        { name: "Telugu Movies", path: "/telugu/" },
+        { name: "Tamil Movies",  path: "/tamil/" },
+        { name: "Malayalam",     path: "/malayalam/" },
+        { name: "Kannada",       path: "/kannada/" },
+        { name: "Bollywood",     path: "/bolly/" },
+        { name: "Web Series",    path: "/web/" }
     ];
 
     function getBaseUrl() {
@@ -30,15 +31,11 @@
         if (!str) return "";
         return String(str)
             .replace(/&#(\d+);/g, function(_, d) { return String.fromCharCode(Number(d)); })
-            .replace(/&#x([0-9a-f]+);/gi, function(_, h) { return String.fromCharCode(parseInt(h, 16)); })
             .replace(/&amp;/gi, "&")
             .replace(/&quot;/gi, '"')
-            .replace(/&#039;/gi, "'")
-            .replace(/&#39;/gi, "'")
             .replace(/&lt;/gi, "<")
             .replace(/&gt;/gi, ">")
-            .replace(/&nbsp;/gi, " ")
-            .replace(/\+/g, " ");
+            .replace(/&nbsp;/gi, " ");
     }
 
     function extractQuality(text) {
@@ -55,99 +52,58 @@
         return "Auto";
     }
 
-    function formatSize(sizeStr) {
-        if (!sizeStr) return "";
-        var match = /([\d.]+)\s*(k|M|G)/i.exec(sizeStr);
-        if (!match) return "";
-        var val = parseFloat(match[1]);
-        var unit = match[2].toUpperCase();
-        if (unit === "G") return val.toFixed(1) + " GB";
-        if (unit === "M") return Math.round(val / 1024) + " MB"; // AutoIndex uses 'k' for kilobytes
-        if (unit === "K") {
-            if (val > 1048576) return (val / 1048576).toFixed(1) + " GB";
-            if (val > 1024) return Math.round(val / 1024) + " MB";
-            return Math.round(val) + " KB";
-        }
-        return sizeStr;
-    }
-
-    async function fetchWithRetry(url, retries) {
-        if (retries === undefined) retries = 2;
-        for (var attempt = 0; attempt <= retries; attempt++) {
-            try {
-                var res = await http_get(url, HEADERS);
-                if (res && (res.status === 200 || res.statusCode === 200)) {
-                    var body = res.body || "";
-                    if (body.length > 200) return body;
-                }
-            } catch (e) {
-                if (attempt === retries) {
-                    console.error("fetch failed after " + (retries + 1) + " attempts: " + url + " - " + e.message);
-                }
+    // Fetch with retry and timeout
+    async function fetchWithTimeout(url, timeoutMs) {
+        if (timeoutMs === undefined) timeoutMs = 15000;
+        try {
+            var result = await Promise.race([
+                http_get(url, HEADERS),
+                new Promise(function(_, reject) {
+                    setTimeout(function() {
+                        reject(new Error("Timeout after " + timeoutMs + "ms"));
+                    }, timeoutMs);
+                })
+            ]);
+            if (result && (result.status === 200 || result.statusCode === 200)) {
+                var body = result.body || "";
+                if (body.length > 200) return body;
             }
-            if (attempt < retries) {
-                // Simple backoff
-                await new Promise(function(r) { setTimeout(r, 500 * (attempt + 1)); });
-            }
+            return "";
+        } catch (e) {
+            return "";
         }
-        return "";
     }
 
     // ---- Parse AutoIndex directory listing (LiteSpeed format) ----
-    // AutoIndex generates:
-    // <tr><td data-sort="*movie_name_(year)"><a href="/section/Movie_Name_(year)/">
-    //   <img...>Movie_Name_(year)</a></td>...</tr>
-    // For files:
-    // <tr><td data-sort="movie_name_year_quality.mkv">
-    //   <a href="/section/Movie_Name_(year)/file_quality.mkv"><img...>file_quality.mkv</a></td>...</tr>
-
-    function parseDirectoryListing(html, sectionBase) {
+    // <tr><td data-sort="*movie_name_(year)">
+    //   <a href="/telugu/Movie_Name_(year)/"><img...>Movie_Name_(year)</a></td>...</tr>
+    function parseDirectoryListing(html) {
         var items = [];
         var seenNames = {};
-        var base = sectionBase || MW_BASE;
 
-        // Parse folder entries (movie folders)
-        var folderRegex = /<tr[^>]*>[\s\S]*?<a\s+href=["']([^"']+\/[^"']*?)["'][^>]*>[\s\S]*?<img[^>]*>\s*([^<]+)\s*<\/a>[\s\S]*?<\/tr>/gi;
+        // Match folder rows: <tr>...<a href="/telugu/Name_(year)/">...Name_(year)</a>...</tr>
+        var regex = /<tr[^>]*>[\s\S]*?<a\s+href=["'](\/[^"']*?\/)["'][^>]*>[\s\S]*?<img[^>]*>\s*([^<]+)\s*<\/a>[\s\S]*?<\/tr>/gi;
         var match;
 
-        while ((match = folderRegex.exec(html)) !== null) {
+        while ((match = regex.exec(html)) !== null) {
             var href = match[1];
             var displayName = decodeHtmlEntities(match[2].trim());
 
-            // Skip parent directory link
-            if (displayName === "Parent Directory" || href.indexOf("Parent") !== -1) continue;
-            if (!href || href === "/") continue;
+            if (displayName === "Parent Directory" || !displayName || href === "/") continue;
+            if (seenNames[href]) continue;
+            seenNames[href] = true;
 
-            // Build full URL
-            var fullUrl;
-            if (href.indexOf("http") === 0) {
-                fullUrl = href;
-            } else if (href.indexOf("/") === 0) {
-                fullUrl = base + href;
-            } else {
-                fullUrl = base + "/" + href;
-            }
-
-            // Extract title and year from display name
-            // Format: "Movie_Name_(year)" or "Movie_Name_(year)_Language"
-            var title = displayName;
+            var title = displayName.replace(/_/g, " ").trim();
             var year = null;
-
             var yearMatch = displayName.match(/\((\d{4})\)/);
             if (yearMatch) {
                 year = parseInt(yearMatch[1]);
                 title = displayName.replace(/[(_]\d{4}[)]/g, "").replace(/_/g, " ").trim();
-            } else {
-                title = displayName.replace(/_/g, " ").trim();
             }
 
-            // Check if it's a series (has "web series", "season" etc)
+            var fullUrl = MW_BASE.replace(/\/+$/, "") + href;
             var isSeries = /season|episode|web.?series/i.test(title) ||
                           (href.indexOf("/web/") !== -1);
-
-            var key = fullUrl;
-            if (seenNames[key]) continue;
-            seenNames[key] = true;
 
             items.push(new MultimediaItem({
                 title: title,
@@ -157,65 +113,33 @@
                 year: year
             }));
         }
-
-        // If no folders found, try parsing the simpler table rows
-        if (items.length === 0) {
-            var simpleRegex = /<a\s+href=["'](\/[^"']*?\/)["'][^>]*>[\s\S]*?<img[^>]*>\s*([^<]+)\s*<\/a>/gi;
-            while ((match = simpleRegex.exec(html)) !== null) {
-                var shref = match[1];
-                var sname = decodeHtmlEntities(match[2].trim());
-                if (sname === "Parent Directory" || shref === "/") continue;
-
-                var syear = null;
-                var syearMatch = sname.match(/\((\d{4})\)/);
-                if (syearMatch) syear = parseInt(syearMatch[1]);
-                var stitle = sname.replace(/[(_]\d{4}[)]/g, "").replace(/_/g, " ").trim();
-
-                var sIsSeries = /season|episode|web.?series/i.test(stitle) ||
-                               (shref.indexOf("/web/") !== -1);
-
-                var sKey = shref;
-                if (seenNames[sKey]) continue;
-                seenNames[sKey] = true;
-
-                items.push(new MultimediaItem({
-                    title: stitle,
-                    url: base + shref,
-                    posterUrl: "",
-                    type: sIsSeries ? "series" : "movie",
-                    year: syear
-                }));
-            }
-        }
-
         return items;
     }
 
-    // ---- Parse movie detail page (AutoIndex file listing) ----
+    // ---- Parse movie detail page (AutoIndex file listing with MKV/MP4 files) ----
     function parseMovieFiles(html, folderUrl) {
         var files = [];
-        var base = getBaseUrl();
 
-        // Parse file entries (video files inside movie folder)
-        var fileRegex = /<tr[^>]*>[\s\S]*?<a\s+href=["']([^"']+)["'][^>]*>[\s\S]*?<img[^>]*>\s*([^<]+)\s*<\/a>[\s\S]*?<\/tr>/gi;
+        // <tr><td data-sort="file.mkv">
+        //   <a href="/telugu/Folder/file.mkv"><img...>file.mkv</a></td>...</tr>
+        var regex = /<tr[^>]*>[\s\S]*?<a\s+href=["']([^"']+)["'][^>]*>[\s\S]*?<img[^>]*>\s*([^<]+)\s*<\/a>[\s\S]*?<\/tr>/gi;
         var match;
 
-        while ((match = fileRegex.exec(html)) !== null) {
+        while ((match = regex.exec(html)) !== null) {
             var href = match[1];
             var fileName = decodeHtmlEntities(match[2].trim());
 
             if (fileName === "Parent Directory" || !fileName) continue;
-
-            // Only include video files
             if (!/\.(mp4|mkv|avi|m3u8|webm)$/i.test(fileName)) continue;
 
             var fullUrl;
             if (href.indexOf("http") === 0) {
                 fullUrl = href;
             } else if (href.indexOf("/") === 0) {
-                fullUrl = base + href;
+                fullUrl = MW_BASE.replace(/\/+$/, "") + href;
             } else {
-                fullUrl = (folderUrl.endsWith("/") ? folderUrl : folderUrl + "/") + href;
+                var base = folderUrl.endsWith("/") ? folderUrl : folderUrl + "/";
+                fullUrl = base + href;
             }
 
             var quality = extractQuality(fileName);
@@ -226,63 +150,40 @@
                 fileName: fileName
             });
         }
-
-        // Also try to extract from the data-sort attributes
-        if (files.length === 0) {
-            var dataSortRegex = /data-sort=["']([^"']*\.(?:mp4|mkv|avi|webm))["'][^>]*>[\s\S]*?<a\s+href=["']([^"']+)["']/gi;
-            while ((match = dataSortRegex.exec(html)) !== null) {
-                var sortName = match[1];
-                var fileHref = match[2];
-
-                var fileFullUrl;
-                if (fileHref.indexOf("http") === 0) {
-                    fileFullUrl = fileHref;
-                } else if (fileHref.indexOf("/") === 0) {
-                    fileFullUrl = base + fileHref;
-                } else {
-                    fileFullUrl = (folderUrl.endsWith("/") ? folderUrl : folderUrl + "/") + fileHref;
-                }
-
-                var fileQuality = extractQuality(sortName);
-
-                files.push({
-                    url: fileFullUrl,
-                    quality: fileQuality,
-                    fileName: sortName
-                });
-            }
-        }
-
         return files;
     }
 
-    // ---- Get Home ----
+    // ---- Fetch a single section ----
+    async function fetchSection(section) {
+        try {
+            var html = await fetchWithTimeout(MW_BASE + section.path, 15000);
+            if (!html || html.length < 300) return null;
+            var items = parseDirectoryListing(html);
+            if (items.length === 0) return null;
+            return { name: section.name, items: items };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // ---- Get Home (ALL sections fetched in PARALLEL) ----
     async function getHome(cb) {
         try {
-            var categories = {};
+            var tasks = HOME_SECTIONS.map(function(s) { return fetchSection(s); });
+            var results = await Promise.all(tasks);
 
-            for (var si = 0; si < HOME_SECTIONS.length; si++) {
-                var section = HOME_SECTIONS[si];
-                try {
-                    var url = MW_BASE + section.path;
-                    var html = await fetchWithRetry(url, 2);
-
-                    if (html && html.length > 300) {
-                        var items = parseDirectoryListing(html, MW_BASE);
-                        if (items.length > 0) {
-                            categories[section.name] = items;
-                            console.log("Loaded " + items.length + " items from " + section.name);
-                        }
-                    }
-                } catch (e) {
-                    console.error("Error loading " + section.name + ": " + e.message);
+            var homeData = {};
+            for (var i = 0; i < results.length; i++) {
+                if (results[i] !== null) {
+                    homeData[results[i].name] = results[i].items;
                 }
             }
 
-            if (Object.keys(categories).length === 0) {
-                cb({ success: false, errorCode: "HOME_ERROR", message: "Could not load any categories from movieswood.cloud" });
+            if (Object.keys(homeData).length === 0) {
+                cb({ success: false, errorCode: "HOME_ERROR",
+                     message: "Could not load any movies. All sources timed out." });
             } else {
-                cb({ success: true, data: categories });
+                cb({ success: true, data: homeData });
             }
         } catch (e) {
             console.error("getHome error: " + e.message);
@@ -290,30 +191,24 @@
         }
     }
 
-    // ---- Search ----
+    // ---- Search (search across all sections in parallel) ----
     async function search(query, cb) {
         try {
-            var results = [];
             var q = query.toLowerCase();
+            var results = [];
 
-            // Search through movieswood.cloud sections
-            for (var si = 0; si < HOME_SECTIONS.length; si++) {
-                var section = HOME_SECTIONS[si];
-                try {
-                    var url = MW_BASE + section.path;
-                    var html = await fetchWithRetry(url, 2);
-                    if (html && html.length > 300) {
-                        var items = parseDirectoryListing(html, MW_BASE);
-                        // Filter by query
-                        for (var ii = 0; ii < items.length; ii++) {
-                            var item = items[ii];
-                            if (item.title.toLowerCase().indexOf(q) !== -1) {
-                                results.push(item);
-                            }
-                        }
+            var tasks = HOME_SECTIONS.map(function(s) {
+                return fetchSection(s);
+            });
+            var sections = await Promise.all(tasks);
+
+            for (var si = 0; si < sections.length; si++) {
+                if (!sections[si]) continue;
+                var items = sections[si].items;
+                for (var ii = 0; ii < items.length; ii++) {
+                    if (items[ii].title.toLowerCase().indexOf(q) !== -1) {
+                        results.push(items[ii]);
                     }
-                } catch (e) {
-                    console.error("Search error in " + section.name + ": " + e.message);
                 }
             }
 
@@ -324,25 +219,23 @@
         }
     }
 
-    // ---- Load (Movie Detail) ----
+    // ---- Load (Movie Detail - fetches the movie folder for MKV files) ----
     async function load(url, cb) {
         try {
-            var html = await fetchWithRetry(url, 2);
+            var html = await fetchWithTimeout(url, 20000);
 
             if (!html || html.length < 200) {
-                cb({ success: false, errorCode: "LOAD_ERROR", message: "Failed to load movie folder" });
+                cb({ success: false, errorCode: "LOAD_ERROR",
+                     message: "Failed to load movie folder" });
                 return;
             }
 
-            // Parse video files from the movie folder
             var files = parseMovieFiles(html, url);
 
-            // Extract title from URL path
             var pathParts = url.replace(/\/+$/, "").split("/");
             var folderName = decodeURIComponent(pathParts[pathParts.length - 1] || "");
             var title = folderName.replace(/_/g, " ").trim();
 
-            // Extract year
             var year = null;
             var yearMatch = title.match(/\((\d{4})\)/);
             if (yearMatch) {
@@ -354,33 +247,29 @@
                           (url.indexOf("/web/") !== -1);
 
             if (files.length > 0) {
-                // Build streams array for the episode
-                var streamData = [];
-                for (var fi = 0; fi < files.length; fi++) {
-                    streamData.push({
-                        url: files[fi].url,
-                        quality: files[fi].quality,
-                        fileName: files[fi].fileName
-                    });
-                }
-
-                var item = new MultimediaItem({
-                    title: title,
-                    url: url,
-                    posterUrl: "",
-                    type: isSeries ? "series" : "movie",
-                    year: year,
-                    episodes: [new Episode({
-                        name: isSeries ? "Episode 1" : "Full Movie",
-                        url: JSON.stringify(streamData),
-                        season: 1,
-                        episode: 1
-                    })]
+                // Build streams: pass all MKV files as JSON in episode URL
+                var streamData = files.map(function(f) {
+                    return { url: f.url, quality: f.quality, fileName: f.fileName };
                 });
 
-                cb({ success: true, data: item });
+                cb({
+                    success: true,
+                    data: new MultimediaItem({
+                        title: title,
+                        url: url,
+                        posterUrl: "",
+                        type: isSeries ? "series" : "movie",
+                        year: year,
+                        episodes: [new Episode({
+                            name: isSeries ? "Episode 1" : "Full Movie",
+                            url: JSON.stringify(streamData),
+                            season: 1,
+                            episode: 1
+                        })]
+                    })
+                });
             } else {
-                // No files found, return the URL as a fallback
+                // No video files found - return folder URL as fallback
                 cb({
                     success: true,
                     data: new MultimediaItem({
@@ -388,13 +277,7 @@
                         url: url,
                         posterUrl: "",
                         type: isSeries ? "series" : "movie",
-                        year: year,
-                        episodes: [new Episode({
-                            name: "Watch",
-                            url: url,
-                            season: 1,
-                            episode: 1
-                        })]
+                        year: year
                     })
                 });
             }
@@ -404,51 +287,54 @@
         }
     }
 
-    // ---- Load Streams ----
+    // ---- Load Streams (returns all quality options) ----
     async function loadStreams(dataStr, cb) {
         try {
-            var streams = [];
-
             var streamData = [];
+
             try {
                 var parsed = JSON.parse(dataStr);
                 if (Array.isArray(parsed)) {
                     streamData = parsed;
                 }
             } catch (e) {
-                // Not JSON, try as direct URL
-                if (dataStr && typeof dataStr === "string") {
+                // Not JSON - try as direct URL
+                if (dataStr && typeof dataStr === "string" && dataStr.length > 5) {
                     streamData = [{ url: dataStr, quality: "Auto" }];
                 }
             }
 
-            for (var si = 0; si < streamData.length; si++) {
-                var sd = streamData[si];
-                if (sd && sd.url) {
-                    var quality = sd.quality || extractQuality(sd.fileName || sd.url) || "Auto";
+            var streams = streamData.map(function(sd) {
+                if (!sd || !sd.url) return null;
+                var quality = sd.quality || extractQuality(sd.fileName || sd.url) || "Auto";
+                return new StreamResult({
+                    url: sd.url,
+                    quality: quality,
+                    source: "TellyBiz [" + quality + "]",
+                    headers: {
+                        "User-Agent": USER_AGENT,
+                        "Referer": MW_BASE + "/",
+                        "Accept": "*/*"
+                    }
+                });
+            }).filter(function(s) { return s !== null; });
 
-                    streams.push(new StreamResult({
-                        url: sd.url,
-                        quality: quality,
-                        source: "TellyBiz [" + quality + "]",
-                        headers: {
-                            "User-Agent": USER_AGENT,
-                            "Referer": MW_BASE + "/",
-                            "Accept": "*/*"
-                        }
-                    }));
-                }
-            }
-
-            if (streams.length === 0) {
-                cb({ success: true, data: [] });
-            } else {
-                cb({ success: true, data: streams });
-            }
+            cb({ success: true, data: streams });
         } catch (e) {
             console.error("loadStreams error: " + e.message);
             cb({ success: true, data: [] });
         }
+    }
+
+    // ---- Helper for filter method ----
+    if (!Array.prototype.filter) {
+        Array.prototype.filter = function(fn) {
+            var res = [];
+            for (var i = 0; i < this.length; i++) {
+                if (fn(this[i])) res.push(this[i]);
+            }
+            return res;
+        };
     }
 
     globalThis.getHome = getHome;

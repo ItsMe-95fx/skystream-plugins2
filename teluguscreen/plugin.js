@@ -32,7 +32,7 @@
         return "Auto";
     }
 
-    // ---- Fetch movies.json with retry ----
+    // ---- Fetch movies.json with retry (cached) ----
     async function fetchMovies(forceRefresh) {
         if (CACHE.movies && !forceRefresh) {
             return CACHE.movies;
@@ -66,14 +66,16 @@
                 return filtered;
             } catch (e) {
                 lastErr = e;
-                console.error("fetchMovies attempt " + (attempt + 1) + " failed: " + e.message);
                 if (attempt < 2) {
                     await new Promise(function(r) { setTimeout(r, 1000); });
                 }
             }
         }
 
-        console.error("fetchMovies failed after 3 attempts: " + (lastErr ? lastErr.message : "unknown"));
+        // If cache has old data, return it instead of failing
+        if (CACHE.movies) {
+            return CACHE.movies;
+        }
         return [];
     }
 
@@ -104,7 +106,7 @@
         return "Classic";
     }
 
-    // ---- Build streams from movie data ----
+    // ---- Build all available streams from movie data ----
     function buildStreams(movie) {
         var streams = [];
         var checked = {};
@@ -112,53 +114,38 @@
         function addStream(url, quality) {
             if (!url || typeof url !== "string") return;
             url = url.trim();
-            if (!url) return;
+            if (!url || !url.startsWith("http")) return;
             if (checked[url]) return;
             checked[url] = true;
 
             var q = quality || extractQuality(url) || "Auto";
-
-            streams.push(new StreamResult({
+            streams.push({
                 url: url,
-                quality: q,
-                source: "TeluguScreen [" + q + "]",
-                headers: {
-                    "User-Agent": USER_AGENT,
-                    "Referer": getBaseUrl() + "/",
-                    "Accept": "*/*"
-                }
-            }));
+                quality: q
+            });
         }
 
-        // 1. Check qualities object (Q360p, Q480p, Q720p - these are the main ones)
+        // 1. Check qualities object (Q360p, Q480p, Q720p - the MAIN source)
         var quals = movie.qualities || {};
         if (quals.Q360p) addStream(quals.Q360p, "360p");
         if (quals.Q480p) addStream(quals.Q480p, "480p");
         if (quals.Q720p) addStream(quals.Q720p, "720p");
 
-        // 2. Check moviePath fields
+        // 2. Check moviePath (unique URL if qualities didn't cover it)
         if (movie.moviePath) addStream(movie.moviePath);
         if (movie.moviePath360p) addStream(movie.moviePath360p, "360p");
         if (movie.moviePath480p) addStream(movie.moviePath480p, "480p");
         if (movie.moviePath720p) addStream(movie.moviePath720p, "720p");
 
-        // 3. Check src fields
+        // 3. Check src fields (often empty but worth checking)
         if (movie.src) addStream(movie.src);
         if (movie.src1) addStream(movie.src1);
         if (movie.src2) addStream(movie.src2);
 
-        // 4. Check quality1, quality2 fields (these might be quality labels with URLs)
-        if (movie.quality1 && typeof movie.quality1 === "string" && movie.quality1.indexOf("http") === 0) {
-            addStream(movie.quality1);
-        }
-        if (movie.quality2 && typeof movie.quality2 === "string" && movie.quality2.indexOf("http") === 0) {
-            addStream(movie.quality2);
-        }
-
         return streams;
     }
 
-    // ---- Get Home (with pagination) ----
+    // ---- Get Home (with "Latest" section first, organized by year/quality/genre) ----
     async function getHome(cb) {
         try {
             var movies = await fetchMovies();
@@ -198,13 +185,25 @@
                 }
             });
 
+            // Sort movies by year descending for "Latest" section
+            var sortedByYear = movies.slice().sort(function(a, b) {
+                return (parseInt(b.year) || 0) - (parseInt(a.year) || 0);
+            });
+
             var data = {};
 
-            // Trending - most recent 20 movies
+            // 1. LATEST - most recent 30 movies (sorted by year DESC)
+            var latestItems = sortedByYear.slice(0, 30).map(function(m) {
+                return movieToItem(m);
+            });
+            data["Latest"] = latestItems;
+
+            // 2. Trending - popular/recent 20 movies (first in the original array)
             data["Trending"] = recent.slice(0, 20);
 
-            // By quality (limited to 40 per section)
-            var qualityOrder = { "BluRay": 0, "WEB-DL": 1, "HDRip": 2, "DVDRip": 3, "WEBRip": 4, "HDTV": 5, "All": 99 };
+            // 3. By quality (limit 40 per section)
+            var qualityOrder = { "BluRay": 0, "WEB-DL": 1, "HDRip": 2, "DVDRip": 3,
+                                 "WEBRip": 4, "HDTV": 5, "All": 99 };
             var sortedQualities = Object.keys(qualities).sort(function(a, b) {
                 return (qualityOrder[a] || 99) - (qualityOrder[b] || 99);
             });
@@ -213,17 +212,18 @@
                 data["Quality: " + q] = qualities[q].slice(0, 40);
             });
 
-            // By year (limited to 40 per section)
+            // 4. By year (limit 40 per section)
             var sortedYears = Object.keys(years).sort(function(a, b) {
-                var ex = function(s) { var n = parseInt(s); return isNaN(n) ? 0 : n; };
-                return ex(b) - ex(a);
+                var na = parseInt(a) || 0;
+                var nb = parseInt(b) || 0;
+                return nb - na;
             });
 
             sortedYears.forEach(function(y) {
                 data["Year: " + y] = years[y].slice(0, 40);
             });
 
-            // By genre (limited to 40 per section)
+            // 5. By genre (limit 40 per section)
             var sortedGenres = Object.keys(genres).sort();
             sortedGenres.forEach(function(g) {
                 data[g] = genres[g].slice(0, 40);
@@ -231,7 +231,7 @@
 
             cb({ success: true, data: data });
         } catch (e) {
-            console.error("getHome error: " + e.message);
+            console.error("getHome error:", e.message);
             cb({ success: false, errorCode: "HOME_ERROR", message: e.message });
         }
     }
@@ -258,26 +258,26 @@
                 return movieToItem(m);
             });
 
-            // Limit search results
             if (results.length > 100) {
                 results = results.slice(0, 100);
             }
 
             cb({ success: true, data: results });
         } catch (e) {
-            console.error("search error: " + e.message);
+            console.error("search error:", e.message);
             cb({ success: true, data: [] });
         }
     }
 
-    // ---- Load (movie detail) ----
+    // ---- Load (movie detail with ALL streams) ----
     async function load(url, cb) {
         try {
             var idMatch = url.match(/id=([^&]+)/);
             var movieId = idMatch ? idMatch[1] : null;
 
             if (!movieId) {
-                cb({ success: false, errorCode: "NO_ID", message: "Could not extract movie ID from URL" });
+                cb({ success: false, errorCode: "NO_ID",
+                     message: "Could not extract movie ID from URL" });
                 return;
             }
 
@@ -291,18 +291,31 @@
             }
 
             if (!movie) {
-                cb({ success: false, errorCode: "NOT_FOUND", message: "Movie not found" });
+                // Try refreshing cache
+                movies = await fetchMovies(true);
+                for (var j = 0; j < movies.length; j++) {
+                    if (String(movies[j].id) === String(movieId)) {
+                        movie = movies[j];
+                        break;
+                    }
+                }
+            }
+
+            if (!movie) {
+                cb({ success: false, errorCode: "NOT_FOUND",
+                     message: "Movie not found" });
                 return;
             }
 
-            var streams = buildStreams(movie);
+            // Build ALL streams
+            var streamList = buildStreams(movie);
 
             var genres = [];
             if (movie.genre) {
-                genres = movie.genre.split(",").map(function(g) { return g.trim(); }).filter(function(g) { return g; });
+                genres = movie.genre.split(",").map(function(g) { return g.trim(); })
+                    .filter(function(g) { return g; });
             }
 
-            // Build cast array
             var cast = [];
             if (movie.actors) {
                 cast = movie.actors.split(",").map(function(a) {
@@ -323,13 +336,18 @@
                 episodes: []
             });
 
-            if (streams.length > 0) {
-                var episodeUrls = streams.map(function(s) {
-                    return { url: s.url, quality: s.quality };
-                });
+            if (streamList.length > 0) {
                 item.episodes = [new Episode({
                     name: "Play Movie",
-                    url: JSON.stringify(episodeUrls),
+                    url: JSON.stringify(streamList),
+                    season: 1,
+                    episode: 1
+                })];
+            } else {
+                // Fallback: return the page URL as direct stream
+                item.episodes = [new Episode({
+                    name: "Play Movie",
+                    url: url,
                     season: 1,
                     episode: 1
                 })];
@@ -337,26 +355,66 @@
 
             cb({ success: true, data: item });
         } catch (e) {
-            console.error("load error: " + e.message);
+            console.error("load error:", e.message);
             cb({ success: false, errorCode: "LOAD_ERROR", message: e.message });
         }
     }
 
-    // ---- Load Streams ----
+    // ---- Load Streams (return ALL available stream qualities) ----
     async function loadStreams(dataStr, cb) {
         try {
             var streams = [];
 
-            // Try to parse as JSON (list of URLs with qualities)
+            // Try to parse as JSON array of {url, quality}
             try {
                 var parsed = JSON.parse(dataStr);
                 if (Array.isArray(parsed) && parsed.length > 0) {
                     parsed.forEach(function(s) {
-                        if (s && s.url) {
+                        if (s && s.url && s.url.startsWith("http")) {
+                            var q = s.quality || extractQuality(s.url) || "Auto";
                             streams.push(new StreamResult({
                                 url: s.url,
-                                quality: s.quality || "Auto",
-                                source: "TeluguScreen [" + (s.quality || "Auto") + "]",
+                                quality: q,
+                                source: "TeluguScreen [" + q + "]",
+                                headers: {
+                                    "User-Agent": USER_AGENT,
+                                    "Referer": getBaseUrl() + "/",
+                                    "Accept": "*/*"
+                                }
+                            }));
+                        }
+                    });
+
+                    if (streams.length > 0) {
+                        cb({ success: true, data: streams });
+                        return;
+                    }
+                }
+            } catch (e) {
+                // JSON parse failed - try other strategies
+            }
+
+            // Fallback: try to extract movie ID from the URL string
+            var idMatch = dataStr.match(/id=([^&]+)/);
+            var movieId = idMatch ? idMatch[1] : null;
+            if (movieId) {
+                var movies = await fetchMovies();
+                var movie = null;
+                for (var i = 0; i < movies.length; i++) {
+                    if (String(movies[i].id) === String(movieId)) {
+                        movie = movies[i];
+                        break;
+                    }
+                }
+                if (movie) {
+                    var streamList = buildStreams(movie);
+                    streamList.forEach(function(s) {
+                        if (s && s.url && s.url.startsWith("http")) {
+                            var q = s.quality || "Auto";
+                            streams.push(new StreamResult({
+                                url: s.url,
+                                quality: q,
+                                source: "TeluguScreen [" + q + "]",
                                 headers: {
                                     "User-Agent": USER_AGENT,
                                     "Referer": getBaseUrl() + "/",
@@ -366,32 +424,11 @@
                         }
                     });
                 }
-            } catch (e) {
-                // Not JSON - try to extract movie ID from URL and rebuild streams
-                var idMatch = dataStr.match(/id=([^&]+)/);
-                var movieId = idMatch ? idMatch[1] : null;
-                if (movieId) {
-                    var movies = await fetchMovies();
-                    var movie = null;
-                    for (var i = 0; i < movies.length; i++) {
-                        if (String(movies[i].id) === String(movieId)) {
-                            movie = movies[i];
-                            break;
-                        }
-                    }
-                    if (movie) {
-                        streams = buildStreams(movie);
-                    }
-                }
             }
 
-            if (streams.length === 0) {
-                cb({ success: true, data: [] });
-            } else {
-                cb({ success: true, data: streams });
-            }
+            cb({ success: true, data: streams });
         } catch (e) {
-            console.error("loadStreams error: " + e.message);
+            console.error("loadStreams error:", e.message);
             cb({ success: true, data: [] });
         }
     }
