@@ -1235,9 +1235,10 @@
             if (addonUrls.length > 0) {
                 slog("info", "Querying " + addonUrls.length + " addons with IDs: " + idsToTry.join(", "));
                 var tasks = [];
-                addonUrls.forEach(function(addonUrl) {
+                // Track addon index for priority sorting
+                addonUrls.forEach(function(addonUrl, addonIdx) {
                     idsToTry.forEach(function(tryId) {
-                        tasks.push(queryAddon(addonUrl, type, tryId, season, episode));
+                        tasks.push({ task: queryAddon(addonUrl, type, tryId, season, episode), priority: addonIdx });
                     });
                 });
 
@@ -1245,9 +1246,12 @@
                 var queryPromise = (async function() {
                     for (var bi = 0; bi < tasks.length; bi += CONCURRENCY_LIMIT) {
                         var batch = tasks.slice(bi, bi + CONCURRENCY_LIMIT);
-                        var batchResults = await Promise.allSettled(batch);
-                        batchResults.forEach(function(r) {
+                        var batchResults = await Promise.allSettled(batch.map(function(t) { return t.task; }));
+                        batchResults.forEach(function(r, ri) {
                             if (r.status === "fulfilled" && r.value && r.value.length > 0) {
+                                var priority = batch[ri].priority;
+                                // Tag each stream with its addon priority
+                                r.value.forEach(function(s) { s._priority = priority; });
                                 allStreams = allStreams.concat(r.value);
                             }
                         });
@@ -1293,9 +1297,12 @@
                 return true;
             });
 
-            // ── Sort: quality desc, cached first ──
+            // ── Sort: addon order (priority) first, then quality desc ──
             var qOrder = { "4K": 0, "2160p": 0, "1440p": 1, "1080p": 2, "720p": 3, "480p": 4, "360p": 5, "YouTube": 6, "Auto": 7 };
             allStreams.sort(function(a, b) {
+                var pa = a._priority !== undefined ? a._priority : 999;
+                var pb = b._priority !== undefined ? b._priority : 999;
+                if (pa !== pb) return pa - pb; // lower index = higher priority = shows first
                 var qa = qOrder[a.quality] !== undefined ? qOrder[a.quality] : 7;
                 var qb = qOrder[b.quality] !== undefined ? qOrder[b.quality] : 7;
                 if (qa !== qb) return qa - qb;
@@ -1303,6 +1310,8 @@
                 if (!a.cached && b.cached) return 1;
                 return 0;
             });
+            // Strip internal priority tags before returning
+            allStreams.forEach(function(s) { delete s._priority; });
 
             var elapsed = Date.now() - startTime;
             slog("info", "Found " + allStreams.length + " unique streams for " + idsToTry[0] + " in " + elapsed + "ms");
