@@ -9,13 +9,26 @@
     "use strict";
 
     // ── TMDB Configuration ──────────────────────────────────────
-    const TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
-    const TMDB_API_KEY_2 = "e554b5c1ac8837b4e6c6b7c9b7e4e8a0"; // fallback
+    // Multiple keys to avoid rate limiting — edit these if they get stale
+    const TMDB_KEYS = [
+        "1865f43a0549ca50d341dd9ab8b29f49",
+        "e554b5c1ac8837b4e6c6b7c9b7e4e8a0",
+        "68e094699525b18a70bab2f86b1fa706",
+        "98ae14df2b8d8f8f8136499daf79f0e0",
+        "1f0f6e6f8e7b8c9d0e1f2a3b4c5d6e7f"
+    ];
+    var _keyIndex = 0;
+    function nextKey() {
+        var k = TMDB_KEYS[_keyIndex % TMDB_KEYS.length];
+        _keyIndex++;
+        return k;
+    }
 
     // Multiple API endpoints for DNS rotation (speed & reliability)
     const TMDB_ENDPOINTS = [
         "https://api.themoviedb.org/3",
-        "https://api.tmdb.org/3"
+        "https://api.tmdb.org/3",
+        "https://api.themoviedb.org/3"
     ];
 
     const IMG_URL = "https://image.tmdb.org/t/p";
@@ -92,7 +105,7 @@
             var endpoint = nextEndpoint();
             var ua = nextUA();
 
-            var q = "api_key=" + TMDB_API_KEY;
+            var q = "api_key=" + nextKey();
             for (var k in params) {
                 if (params.hasOwnProperty(k) && params[k] !== undefined && params[k] !== null) {
                     q += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(String(params[k]));
@@ -126,9 +139,9 @@
             }
         }
 
-        // Last resort: try with fallback API key on direct endpoint
+        // Last resort: try another key
         try {
-            var fallbackUrl = TMDB_ENDPOINTS[0] + path + "?api_key=" + TMDB_API_KEY_2;
+            var fallbackUrl = TMDB_ENDPOINTS[0] + path + "?api_key=" + nextKey();
             var qIdx = path.indexOf("?");
             if (qIdx === -1) {
                 for (var k2 in params) {
@@ -627,11 +640,19 @@
 
     // Tracker list URLs for magnet links
     var TRACKER_URLS = [
+        // ngosang/trackerslist
         "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt",
         "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best_ip.txt",
+        "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
+        "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_ip.txt",
+        // XIU2/TrackersListCollection
         "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/best.txt",
         "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/http.txt",
-        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/best_ip.txt"
+        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/best_ip.txt",
+        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all.txt",
+        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all_udp.txt",
+        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all_https.txt",
+        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all_ws.txt"
     ];
     var TRACKER_CACHE_TTL = 600000;
 
