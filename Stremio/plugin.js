@@ -330,82 +330,54 @@
     }
 
     // ============================================================
-    //  getHome — UNCHANGED from tmdb-catalog
+    //  getHome — batched TMDB calls with 20s deadline
     // ============================================================
     async function getHome(cb) {
+        var HOME_DEADLINE = 20000; // 20s max
         try {
             var R = {};
             var lang = "en-US";
+            var deadlineTimer = null;
 
-            var d = await tmdb("/trending/all/day", { language: lang });
-            if (d && d.results) {
-                R["Trending"] = d.results.slice(0, 20).map(function(r) {
-                    return toItem(r, { mediaType: r.media_type || "movie" });
-                });
-            }
+            // Fire ALL TMDB requests in parallel
+            var allPromises = [
+                tmdb("/trending/all/day", { language: lang }).then(function(d) {
+                    if (d && d.results) R["Trending"] = d.results.slice(0, 20).map(function(r) {
+                        return toItem(r, { mediaType: r.media_type || "movie" });
+                    });
+                }),
+                fetchPages("/movie/now_playing", { language: lang, region: "US" }, "movie", 40).then(function(x) { if (x.length) R["Airing Today – Movies"] = x; }),
+                fetchPages("/tv/airing_today", { language: lang }, "tv", 40).then(function(x) { if (x.length) R["Airing Today – TV Series"] = x; }),
+                fetchFiltered("/tv/airing_today", { language: lang }, isAnime, "tv", 30).then(function(x) { if (x.length) R["Airing Today – Anime"] = x; }),
+                fetchFiltered("/tv/airing_today", { language: lang }, isKDrama, "tv", 30).then(function(x) { if (x.length) R["Airing Today – K-Drama"] = x; }),
+                fetchPages("/trending/movie/day", { language: lang }, "movie", 40).then(function(x) { if (x.length) R["Trending Movies Today"] = x; }),
+                fetchPages("/trending/tv/day", { language: lang }, "tv", 40).then(function(x) { if (x.length) R["Trending Series Today"] = x; }),
+                fetchFiltered("/trending/tv/day", { language: lang }, isAnime, "tv", 30).then(function(x) { if (x.length) R["Trending Anime Today"] = x; }),
+                fetchFiltered("/trending/tv/day", { language: lang }, isKDrama, "tv", 30).then(function(x) { if (x.length) R["Trending K-Drama Today"] = x; }),
+                fetchPages("/trending/movie/week", { language: lang }, "movie", 40).then(function(x) { if (x.length) R["Trending Movies This Month"] = x; }),
+                fetchPages("/trending/tv/week", { language: lang }, "tv", 40).then(function(x) { if (x.length) R["Trending Series This Month"] = x; }),
+                fetchFiltered("/trending/tv/week", { language: lang }, isAnime, "tv", 30).then(function(x) { if (x.length) R["Trending Anime This Month"] = x; }),
+                fetchFiltered("/trending/tv/week", { language: lang }, isKDrama, "tv", 30).then(function(x) { if (x.length) R["Trending K-Drama This Month"] = x; }),
+                fetchPages("/movie/top_rated", { language: lang }, "movie", 40).then(function(x) { if (x.length) R["Top Rated Movies"] = x; }),
+                fetchPages("/tv/top_rated", { language: lang }, "tv", 40).then(function(x) { if (x.length) R["Top Rated TV Shows"] = x; }),
+                discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "vote_average.desc", "vote_count.gte": 100 }, 40).then(function(x) { if (x.length) R["Top Rated Anime"] = x; }),
+                discoverMovie({ with_genres: "16", with_original_language: "ja", sort_by: "vote_average.desc", "vote_count.gte": 100 }, 40).then(function(x) { if (x.length) R["Top Rated Anime Movies"] = x; }),
+                discoverTv({ with_origin_country: "KR", sort_by: "vote_average.desc", "vote_count.gte": 50 }, 40).then(function(x) { if (x.length) R["Top Rated K-Drama"] = x; }),
+                discoverMovie({ with_original_language: "te", sort_by: "primary_release_date.desc", "vote_count.gte": 1 }, 100).then(function(x) { if (x.length) R["Latest Telugu Movies"] = x; }),
+                discoverMovie({ with_original_language: "te", with_watch_providers: "8|9|122|113|115|2202", watch_region: "IN", sort_by: "primary_release_date.desc", "vote_count.gte": 1 }, 100).then(function(x) { if (x.length) R["Telugu Movies on OTT"] = x; }),
+                fetchPages("/movie/popular", { language: lang }, "movie", 40).then(function(x) { if (x.length) R["Popular Movies"] = x; }),
+                fetchPages("/tv/popular", { language: lang }, "tv", 40).then(function(x) { if (x.length) R["Popular Series"] = x; }),
+                discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc" }, 40).then(function(x) { if (x.length) R["Popular Anime"] = x; }),
+                discoverTv({ with_genres: "16", with_original_language: "en", sort_by: "popularity.desc" }, 40).then(function(x) { if (x.length) R["Popular Animation"] = x; }),
+                fetchFiltered("/trending/tv/day", { language: lang }, isWesternAnim, "tv", 30).then(function(x) { if (x.length) R["Trending Animation Today"] = x; })
+            ];
 
-            // Airing Today (4)
-            var x = await fetchPages("/movie/now_playing", { language: lang, region: "US" }, "movie", 40);
-            if (x.length) R["Airing Today – Movies"] = x;
-            x = await fetchPages("/tv/airing_today", { language: lang }, "tv", 40);
-            if (x.length) R["Airing Today – TV Series"] = x;
-            x = await fetchFiltered("/tv/airing_today", { language: lang }, isAnime, "tv", 30);
-            if (x.length) R["Airing Today – Anime"] = x;
-            x = await fetchFiltered("/tv/airing_today", { language: lang }, isKDrama, "tv", 30);
-            if (x.length) R["Airing Today – K-Drama"] = x;
+            // Race against deadline
+            var deadlineP = new Promise(function(resolve) { deadlineTimer = setTimeout(resolve, HOME_DEADLINE); });
+            await Promise.race([Promise.allSettled(allPromises), deadlineP]);
+            clearTimeout(deadlineTimer);
 
-            // Trending Today (4)
-            x = await fetchPages("/trending/movie/day", { language: lang }, "movie", 40);
-            if (x.length) R["Trending Movies Today"] = x;
-            x = await fetchPages("/trending/tv/day", { language: lang }, "tv", 40);
-            if (x.length) R["Trending Series Today"] = x;
-            x = await fetchFiltered("/trending/tv/day", { language: lang }, isAnime, "tv", 30);
-            if (x.length) R["Trending Anime Today"] = x;
-            x = await fetchFiltered("/trending/tv/day", { language: lang }, isKDrama, "tv", 30);
-            if (x.length) R["Trending K-Drama Today"] = x;
-
-            // Trending This Week (4)
-            x = await fetchPages("/trending/movie/week", { language: lang }, "movie", 40);
-            if (x.length) R["Trending Movies This Month"] = x;
-            x = await fetchPages("/trending/tv/week", { language: lang }, "tv", 40);
-            if (x.length) R["Trending Series This Month"] = x;
-            x = await fetchFiltered("/trending/tv/week", { language: lang }, isAnime, "tv", 30);
-            if (x.length) R["Trending Anime This Month"] = x;
-            x = await fetchFiltered("/trending/tv/week", { language: lang }, isKDrama, "tv", 30);
-            if (x.length) R["Trending K-Drama This Month"] = x;
-
-            // Top Rated (5)
-            x = await fetchPages("/movie/top_rated", { language: lang }, "movie", 40);
-            if (x.length) R["Top Rated Movies"] = x;
-            x = await fetchPages("/tv/top_rated", { language: lang }, "tv", 40);
-            if (x.length) R["Top Rated TV Shows"] = x;
-            x = await discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "vote_average.desc", "vote_count.gte": 100 }, 40);
-            if (x.length) R["Top Rated Anime"] = x;
-            x = await discoverMovie({ with_genres: "16", with_original_language: "ja", sort_by: "vote_average.desc", "vote_count.gte": 100 }, 40);
-            if (x.length) R["Top Rated Anime Movies"] = x;
-            x = await discoverTv({ with_origin_country: "KR", sort_by: "vote_average.desc", "vote_count.gte": 50 }, 40);
-            if (x.length) R["Top Rated K-Drama"] = x;
-
-            // Latest Telugu (2)
-            x = await discoverMovie({ with_original_language: "te", sort_by: "primary_release_date.desc", "vote_count.gte": 1 }, 100);
-            if (x.length) R["Latest Telugu Movies"] = x;
-            x = await discoverMovie({ with_original_language: "te", with_watch_providers: "8|9|122|113|115|2202", watch_region: "IN", sort_by: "primary_release_date.desc", "vote_count.gte": 1 }, 100);
-            if (x.length) R["Telugu Movies on OTT"] = x;
-
-            // Popular (4)
-            x = await fetchPages("/movie/popular", { language: lang }, "movie", 40);
-            if (x.length) R["Popular Movies"] = x;
-            x = await fetchPages("/tv/popular", { language: lang }, "tv", 40);
-            if (x.length) R["Popular Series"] = x;
-            x = await discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc" }, 40);
-            if (x.length) R["Popular Anime"] = x;
-            x = await discoverTv({ with_genres: "16", with_original_language: "en", sort_by: "popularity.desc" }, 40);
-            if (x.length) R["Popular Animation"] = x;
-
-            // Trending Animation
-            x = await fetchFiltered("/trending/tv/day", { language: lang }, isWesternAnim, "tv", 30);
-            if (x.length) R["Trending Animation Today"] = x;
-
+            // Return whatever we got
             var clean = {};
             for (var cat in R) {
                 if (R.hasOwnProperty(cat) && R[cat] && R[cat].length > 0) {
@@ -413,7 +385,11 @@
                 }
             }
 
-            cb({ success: true, data: clean });
+            if (Object.keys(clean).length === 0) {
+                cb({ success: false, errorCode: "NO_DATA", message: "No data received within deadline" });
+            } else {
+                cb({ success: true, data: clean });
+            }
         } catch (e) {
             console.error("[TMDB] getHome:", e.message || e);
             cb({ success: false, errorCode: "HOME_ERROR", message: e.message || "Error" });
@@ -1189,7 +1165,7 @@
         }
     }
 
-    // ── 3o. Torrentio Fallback (auto-finds URL from configured addons) ──
+    // ── 3o. Torrentio Fallback — only if user has Torrentio in their addons ──
     function findTorrentioBaseUrl() {
         var addons = getStreamAddons();
         for (var i = 0; i < addons.length; i++) {
@@ -1197,11 +1173,12 @@
                 return fixSourceUrl(addons[i]);
             }
         }
-        return "https://torrentio.strem.fun";
+        return null; // not configured, no fallback
     }
     async function tryTorrentioFallback(id, type, season, episode) {
+        var baseUrl = findTorrentioBaseUrl();
+        if (!baseUrl) return []; // user removed Torrentio, skip
         try {
-            var baseUrl = findTorrentioBaseUrl();
             var encodedId = encodeURIComponent(id);
             var url = baseUrl + "/stream/" + type + "/" + encodedId;
             if (season > 0 && episode > 0) url += ":" + season + ":" + episode;
