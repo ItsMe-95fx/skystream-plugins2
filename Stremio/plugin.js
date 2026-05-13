@@ -148,13 +148,6 @@
                 "User-Agent": ua,
                 "Accept": "application/json",
                 "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-site",
                 "Referer": "https://www.themoviedb.org/"
             };
 
@@ -984,14 +977,7 @@
         var responseHeaders = {
             "User-Agent": STREAM_USER_AGENT,
             "Referer": baseUrl + "/",
-            "Origin": baseUrl,
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Sec-Fetch-Dest": "video",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "cross-site"
+            "Origin": baseUrl
         };
         if (stream.behaviorHints) {
             if (stream.behaviorHints.proxyHeaders && stream.behaviorHints.proxyHeaders.request) {
@@ -1200,19 +1186,14 @@
             var encodedId = encodeURIComponent(id);
             var ua = getRandomUA();
 
-            // Request headers: mimic a real browser
+            // Request headers: Origin + Referer are needed by some CDNs
+            // NO Accept-Encoding — runtime can't decompress gzip
             var reqHeaders = {
                 "User-Agent": ua,
                 "Accept": "application/json",
                 "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
                 "Referer": baseUrl + "/",
-                "Origin": baseUrl,
-                "Connection": "keep-alive",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-site",
-                "Cache-Control": "no-cache"
+                "Origin": baseUrl
             };
 
             // Try URL patterns (single attempt)
