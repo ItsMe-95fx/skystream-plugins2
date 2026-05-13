@@ -8,7 +8,6 @@
   "languages": ["en"],
   "categories": ["Movies", "Anime", "Adult", "Sports"],
   "isAdult": false,
-  "catalogAddon": "https://7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club/bmZ4LGFtcCxjcnUsamhzLHplZSxzb255bGl2LGF0cDo6SU46MTc3ODMzMjQyMDk2MDowOjA6/manifest.json",
   "streamAddons": [
     "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
     "https://vidfast-stremio-addon.zmoualhi.workers.dev/manifest.json",
