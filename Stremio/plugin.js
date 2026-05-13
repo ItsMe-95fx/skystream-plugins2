@@ -943,25 +943,32 @@
         var displayName = originalTitle || originalName || addonName;
 
         // ── Build StreamResult ──
+        // Handle proxy headers from addon's behaviorHints (critical for some CDNs)
+        var responseHeaders = { "User-Agent": STREAM_USER_AGENT, "Referer": baseUrl + "/", "Origin": baseUrl };
+        if (stream.behaviorHints) {
+            if (stream.behaviorHints.proxyHeaders && stream.behaviorHints.proxyHeaders.request) {
+                responseHeaders = Object.assign({}, responseHeaders, stream.behaviorHints.proxyHeaders.request);
+            } else if (stream.behaviorHints.headers) {
+                responseHeaders = Object.assign({}, responseHeaders, stream.behaviorHints.headers);
+            }
+        }
+
         var result = {
             url: null,
             quality: features.resolution,
             source: displayName,
+            title: displayName,
             cached: stream.cached || false,
             size: stream.size || null,
-            headers: { "User-Agent": STREAM_USER_AGENT, "Referer": baseUrl + "/" },
+            headers: responseHeaders,
             behaviorHints: stream.behaviorHints || {}
+            // description intentionally omitted - StreamResult strips it
         };
 
         // --- 1) DIRECT HTTP(S) URL ---
         if (stream.url && isValidHttpUrl(stream.url)) {
             result.url = stream.url;
-            var bh = stream.behaviorHints || {};
-            if (bh.proxyHeaders && bh.proxyHeaders.request) {
-                result.headers = Object.assign(result.headers, bh.proxyHeaders.request);
-            } else if (bh.headers) {
-                result.headers = Object.assign(result.headers, bh.headers);
-            }
+            // Add Origin for HLS/DASH streams if not already set
             if (stream.url.indexOf(".m3u8") !== -1 || stream.url.indexOf(".mpd") !== -1) {
                 if (!result.headers["Origin"]) {
                     try { var u = new URL(stream.url); result.headers["Origin"] = u.protocol + "//" + u.hostname; } catch (e) {}
@@ -1134,14 +1141,26 @@
     }
 
     // ── 3p. Get streams from a single addon ──
+    function getRandomUA() {
+        return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+    }
     async function queryAddon(addonManifestUrl, type, id, season, episode) {
         try {
             var baseUrl = fixSourceUrl(addonManifestUrl);
             var addonName = extractSourceName(addonManifestUrl);
             var encodedId = encodeURIComponent(id);
+            var ua = getRandomUA();
 
-            // Try URL patterns (single attempt, 12s timeout)
-            var urlsToTry = [
+            // Request headers: include Origin + Referer (some CDNs require both)
+            var reqHeaders = {
+                "User-Agent": ua,
+                "Accept": "application/json",
+                "Referer": baseUrl + "/",
+                "Origin": baseUrl,
+                "Accept-Language": "en-US,en;q=0.9"
+            };
+
+            // Try URL patterns (single attempt)
                 baseUrl + "/stream/" + type + "/" + encodedId + ".json"
             ];
             if (season > 0 && episode > 0) {
@@ -1150,7 +1169,7 @@
             }
 
             for (var ui = 0; ui < urlsToTry.length; ui++) {
-                var streamData = await fetchWithTimeout(urlsToTry[ui], STREAM_HEADERS, ADDON_TIMEOUT_MS);
+                var streamData = await fetchWithTimeout(urlsToTry[ui], reqHeaders, ADDON_TIMEOUT_MS);
                 if (streamData && streamData.streams && streamData.streams.length > 0) {
                     slog("debug", addonName + " returned " + streamData.streams.length + " streams");
                     return await processStreamResponse(streamData.streams, addonName, baseUrl);
