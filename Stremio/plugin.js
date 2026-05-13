@@ -835,7 +835,20 @@
         return trackersCache;
     }
 
-    // ── 3i. Stream Feature Parsing ────────────────────────────
+    // ── 3i. Magnet Link Builder ────────────────────────────────
+    function buildMagnetLink(infoHash, displayName, trackers) {
+        var magnet = "magnet:?xt=urn:btih:" + infoHash + "&dn=" + encodeURIComponent(displayName || infoHash);
+        if (trackers && trackers.length > 0) {
+            var added = 0;
+            for (var ti = 0; ti < trackers.length && added < 20; ti++) {
+                magnet += "&tr=" + encodeURIComponent(trackers[ti]);
+                added++;
+            }
+        }
+        return magnet;
+    }
+
+    // ── 3j. Stream Feature Parsing ────────────────────────────
     function parseStreamFeatures(str) {
         var result = {
             resolution: "Auto", codec: null, hdr: null, audio: null,
@@ -965,23 +978,19 @@
             return new StreamResult(result);
         }
 
-        // --- 2) TORRENT (infoHash) ---
+        // --- 2) TORRENT (infoHash) - use magnet links ──
         if (stream.infoHash) {
             var filename = "";
             if (stream.behaviorHints && stream.behaviorHints.filename) filename = stream.behaviorHints.filename;
             else if (stream.title) filename = stream.title;
             else if (stream.name) filename = stream.name;
-            result.url = "torrent:" + stream.infoHash + ":" + (stream.fileIdx || 0);
+            result.url = buildMagnetLink(stream.infoHash, filename || displayName, trackers);
             result.infoHash = stream.infoHash;
             result.fileIndex = stream.fileIdx || 0;
-            result.source = displayName;  // Use original name, not just addonName
+            result.source = displayName;
             result.title = filename;
             if (!result.behaviorHints || Object.keys(result.behaviorHints).length === 0) {
                 result.behaviorHints = { notWebReady: true };
-            }
-            // Attach trackers as sources so the runtime can use them
-            if (trackers && trackers.length > 0) {
-                result.sources = trackers.slice(0, 20).map(function(t) { return "tracker:" + t; });
             }
             return new StreamResult(result);
         }
@@ -1040,10 +1049,11 @@
     // ── 3k. Process Raw Streams from Addon ────────────────────
     async function processStreamResponse(streams, addonName, baseUrl) {
         if (!streams || !Array.isArray(streams)) return [];
+        var trackers = await getTrackers();
         var results = [];
         for (var s = 0; s < streams.length; s++) {
             try {
-                var formatted = formatStream(streams[s], addonName, baseUrl);
+                var formatted = formatStream(streams[s], addonName, baseUrl, trackers);
                 if (formatted) results.push(formatted);
             } catch (e) {}
         }
