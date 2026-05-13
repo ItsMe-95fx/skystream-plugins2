@@ -772,16 +772,16 @@
 
     // ── 3h. Get Addon URLs (from manifest, fallback to defaults) ──
     function getStreamAddons() {
-        // From plugin.json manifest — try streamAddons first, then addons
-        if (globalThis.manifest) {
-            if (globalThis.manifest.streamAddons && Array.isArray(globalThis.manifest.streamAddons)) {
-                return globalThis.manifest.streamAddons;
-            }
-            if (globalThis.manifest.addons && Array.isArray(globalThis.manifest.addons)) {
-                return globalThis.manifest.addons;
-            }
+        // manifest is a global injected by the skystream runtime
+        // access it directly (not via globalThis, which may not have it)
+        var m = (typeof manifest !== 'undefined') ? manifest : null;
+        if (!m && typeof globalThis !== 'undefined' && globalThis.manifest) {
+            m = globalThis.manifest;
         }
-        // Fallback: return empty to use Torrentio
+        if (m) {
+            if (m.streamAddons && Array.isArray(m.streamAddons)) return m.streamAddons;
+            if (m.addons && Array.isArray(m.addons)) return m.addons;
+        }
         return [];
     }
 
