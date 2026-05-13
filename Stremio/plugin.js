@@ -797,42 +797,16 @@
         } catch (e) { return "Addon"; }
     }
 
-    // ── 3h. Tracker Management ────────────────────────────────
+    // ── 3h. Tracker Management (instant, no external fetches) ──
+    var STATIC_TRACKERS = [
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://tracker.openbittorrent.com:6969/announce",
+        "udp://tracker.torrent.eu.org:451/announce",
+        "udp://exodus.desync.com:6969/announce",
+        "udp://public.popcorn-tracker.org:6969/announce"
+    ];
     async function getTrackers() {
-        var now = Date.now();
-        if (trackersCache && (now - lastTrackersFetch) < TRACKER_CACHE_TTL) return trackersCache;
-
-        var trackerSet = {};
-        for (var ti = 0; ti < TRACKER_URLS.length; ti++) {
-            try {
-                var res = await http_get(TRACKER_URLS[ti], STREAM_HEADERS);
-                if (res && res.body) {
-                    var lines = res.body.split("\n");
-                    for (var i = 0; i < lines.length; i++) {
-                        var line = lines[i].trim();
-                        if (line && line.indexOf("://") > 0 && line.indexOf("/announce") > 0) {
-                            trackerSet[line] = true;
-                        }
-                    }
-                }
-            } catch (e) { slog("debug", "Failed to fetch trackers from " + TRACKER_URLS[ti]); }
-        }
-
-        var fallbacks = [
-            "udp://tracker.opentrackr.org:1337/announce",
-            "udp://tracker.openbittorrent.com:6969/announce",
-            "udp://tracker.torrent.eu.org:451/announce",
-            "udp://exodus.desync.com:6969/announce",
-            "udp://public.popcorn-tracker.org:6969/announce"
-        ];
-        for (var fi = 0; fi < fallbacks.length; fi++) {
-            if (!trackerSet[fallbacks[fi]]) trackerSet[fallbacks[fi]] = true;
-        }
-
-        trackersCache = Object.keys(trackerSet);
-        lastTrackersFetch = now;
-        slog("info", "Loaded " + trackersCache.length + " trackers");
-        return trackersCache;
+        return STATIC_TRACKERS;
     }
 
     // ── 3i. Magnet Link Builder ────────────────────────────────
