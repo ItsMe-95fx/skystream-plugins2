@@ -25,8 +25,9 @@
     const STILL = "w92";       // Minimum still (92px)
     const ANIME_GENRE = 16;
 
-    const MAX_PAGES = 5;
+    const MAX_PAGES = 2;         // Reduced for speed (was 5)
     const MAX_ITEMS = 100;
+    const TMDB_CACHE_TTL = 300000; // 5 min cache for TMDB responses
 
     // Multi User-Agent rotation (avoids throttling)
     const USER_AGENTS = [
@@ -72,10 +73,19 @@
 
     function pad(n) { return n < 10 ? "0" + n : String(n); }
 
-    // ── TMDB Fetch with Retry + User-Agent + DNS Rotation ───────
+    // ── TMDB Fetch with Cache + Retry + User-Agent + DNS Rotation ──
+    var tmdbResponseCache = {};
     async function tmdb(path, params) {
         params = params || {};
-        var maxRetries = 3;
+
+        // Build cache key from path + params
+        var cacheKey = path + "|" + JSON.stringify(params);
+        var cached = tmdbResponseCache[cacheKey];
+        if (cached && (Date.now() - cached.ts) < TMDB_CACHE_TTL) {
+            return cached.data;
+        }
+
+        var maxRetries = 2; // reduced from 3 for speed
         var lastError = null;
 
         for (var attempt = 0; attempt < maxRetries; attempt++) {
@@ -100,7 +110,10 @@
                 var res = await http_get(url, headers);
                 if (res && res.status === 200 && res.body) {
                     var parsed = safeJson(res.body, null);
-                    if (parsed) return parsed;
+                    if (parsed) {
+                        tmdbResponseCache[cacheKey] = { ts: Date.now(), data: parsed };
+                        return parsed;
+                    }
                 }
                 lastError = "Status: " + (res ? res.status : "no response");
             } catch (e) {
@@ -129,12 +142,16 @@
                 "Accept": "application/json"
             });
             if (res2 && res2.status === 200 && res2.body) {
-                return safeJson(res2.body, null);
+                var parsed2 = safeJson(res2.body, null);
+                if (parsed2) {
+                    tmdbResponseCache[cacheKey] = { ts: Date.now(), data: parsed2 };
+                    return parsed2;
+                }
             }
-        } catch (e) {
-            console.warn("[TMDB] Fallback also failed");
-        }
+        } catch (e) {}
 
+        // Cache null result briefly to avoid retry storms
+        tmdbResponseCache[cacheKey] = { ts: Date.now(), data: null };
         return null;
     }
 
