@@ -1,0 +1,19 @@
+{
+  "packageName": "com.cookie.moviezwap",
+  "name": "Moviezwap",
+  "version": 3,
+  "baseUrl": "https://www.moviezwap.love/",
+  "description": "Telugu & Tamil movies provider - Latest releases in multiple qualities",
+  "authors": [
+    "Cookie\ud83c\udf6a"
+  ],
+  "languages": [
+    "te",
+    "ta",
+    "hi"
+  ],
+  "categories": [
+    "Movie",
+    "TvSeries"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "packageName": "com.cookie.vegamovies",
+  "name": "VegaMovies",
+  "version": 1,
+  "baseUrl": "https://vegamovies.market",
+  "description": "VegaMovies - Movies, TV Shows and Web Series streaming provider with multi-server support (V-Cloud, FSL, Mega, Buzz, Pixeldrain, 10Gbps)",
+  "authors": [
+    "Cookie\ud83c\udf6a"
+  ],
+  "languages": [
+    "hi",
+    "en"
+  ],
+  "categories": [
+    "Movies",
+    "TV",
+    "Anime"
+  ]
+}

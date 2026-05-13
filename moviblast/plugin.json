@@ -1,0 +1,19 @@
+{
+  "packageName": "com.cookie.moviblast",
+  "name": "MovieBlast",
+  "version": 1,
+  "baseUrl": "https://app.cloud-mb.xyz",
+  "description": "MovieBlast \u2013 Telugu Movies & Series. Full API-based scraper with HMAC-signed stream URLs.",
+  "authors": [
+    "Cookie\ud83c\udf6a"
+  ],
+  "languages": [
+    "te",
+    "en"
+  ],
+  "categories": [
+    "Movie",
+    "TvSeries"
+  ],
+  "iconUrl": "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/movieblast.png"
+}

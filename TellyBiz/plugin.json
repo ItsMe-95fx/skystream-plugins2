@@ -1,0 +1,20 @@
+{
+  "packageName": "com.cookie.tellybiz",
+  "name": "Tellybiz",
+  "version": 1,
+  "baseUrl": "https://tellybiz.in",
+  "description": "Watch Telugu, Dubbed, English, Bollywood, Webseries, Malayalam, and Kannada movies and TV shows",
+  "authors": [
+    "Cookie\ud83c\udf6a"
+  ],
+  "language": "en",
+  "supportedTypes": [
+    "movie",
+    "series"
+  ],
+  "iconUrl": "https://tellybiz.in/favicon.ico",
+  "hasHomePage": true,
+  "hasChromecast": false,
+  "requiresLogin": false,
+  "isNsfw": false
+}

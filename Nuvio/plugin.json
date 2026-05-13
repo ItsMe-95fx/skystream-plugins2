@@ -1,0 +1,43 @@
+{
+  "packageName": "com.cookie.nuvio",
+  "name": "Nuvio Bridge",
+  "version": 5,
+  "baseUrl": "https://api.themoviedb.org/3",
+  "description": "Universal bridge for 200+ Nuvio streaming providers. v5.0: Massively parallel batch processing, 300+ stream early-exit, smart caching, sliding concurrency window. Dynamic home with trending/popular/top-rated. Ultra-fast parallel stream scraping.",
+  "authors": [
+    "Cookie\ud83c\udf6a"
+  ],
+  "languages": [
+    "en",
+    "hi",
+    "ta",
+    "te",
+    "ml",
+    "kn",
+    "ar",
+    "fr",
+    "es",
+    "pt",
+    "ja",
+    "ko",
+    "zh",
+    "de",
+    "it",
+    "pl",
+    "tr"
+  ],
+  "categories": [
+    "Movie",
+    "TvSeries",
+    "Anime"
+  ],
+  "nuvioManifests": [
+    "https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/phisher98/phisher-nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/michat88/nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/PirateZoro9/nuvio-kabir-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/hihihihihiiray/plugins/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/Abinanthankv/NuvioRepo/refs/heads/master/manifest.json"
+  ]
+}

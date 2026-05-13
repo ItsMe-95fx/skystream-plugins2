@@ -1,0 +1,20 @@
+{
+  "packageName": "com.cookie.movie",
+  "name": "5Movierulz",
+  "version": 3,
+  "baseUrl": "https://www.5movierulz.army",
+  "description": "5Movierulz plugin - scrapes movies with homepage categories, search, detail pages, and embedded video stream extraction",
+  "authors": [
+    "Cookie\ud83c\udf6a"
+  ],
+  "languages": [
+    "en",
+    "hi",
+    "te",
+    "ta",
+    "ml"
+  ],
+  "categories": [
+    "Movie"
+  ]
+}

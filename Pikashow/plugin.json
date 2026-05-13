@@ -1,0 +1,25 @@
+{
+  "packageName": "com.cookie.pikashow",
+  "name": "PikaShow",
+  "version": 3,
+  "baseUrl": "https://manoda.co",
+  "description": "Stream movies and series from PikaShow. Hollywood, Bollywood, TV series & more.",
+  "authors": [
+    "Cookie\ud83c\udf6a"
+  ],
+  "languages": [
+    "en",
+    "hi",
+    "ta",
+    "te",
+    "ml",
+    "bn",
+    "mr",
+    "gu",
+    "pa"
+  ],
+  "categories": [
+    "Movies",
+    "TV"
+  ]
+}

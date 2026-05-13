@@ -1,0 +1,24 @@
+{
+  "packageName": "com.cookie.teluguscreen",
+  "name": "TeluguScreen",
+  "version": 1,
+  "baseUrl": "https://teluguscreen.com",
+  "description": "TeluguScreen movies and TV shows",
+  "authors": [
+    "Cookie\ud83c\udf6a"
+  ],
+  "languages": [
+    "te",
+    "en"
+  ],
+  "categories": [
+    "Movies",
+    "TV Shows"
+  ],
+  "domains": [
+    {
+      "name": "teluguscreen.com",
+      "url": "https://teluguscreen.com"
+    }
+  ]
+}
