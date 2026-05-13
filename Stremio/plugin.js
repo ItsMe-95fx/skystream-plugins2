@@ -641,34 +641,11 @@
         "Accept": "application/json",
         "Accept-Language": "en-US,en;q=0.5"
     };
-    var ADDON_TIMEOUT_MS = 30000;       // 30s per addon query (slow connections)
+    var ADDON_TIMEOUT_MS = 30000;       // 30s per addon query
     var STREAM_CACHE_TTL = 600000;      // 10 min cache
-    var SUBTITLE_TIMEOUT = 15000;
-    var CONCURRENCY_LIMIT = 6;          // Max parallel addon queries
-    var GLOBAL_DEADLINE_MS = 60000;     // Hard cutoff: return results after 60s max
-
-    // Tracker list URLs for magnet links
-    var TRACKER_URLS = [
-        // ngosang/trackerslist
-        "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt",
-        "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best_ip.txt",
-        "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
-        "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_ip.txt",
-        // XIU2/TrackersListCollection
-        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/best.txt",
-        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/http.txt",
-        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/best_ip.txt",
-        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all.txt",
-        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all_udp.txt",
-        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all_https.txt",
-        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all_ws.txt"
-    ];
-    var TRACKER_CACHE_TTL = 600000;
 
     // ── 3b. Caches ────────────────────────────────────────────
     var streamResultCache = {};
-    var trackersCache = null;
-    var lastTrackersFetch = 0;
     var tmdbIdCache = {};           // tmdbId → imdbId cache
 
     // ── 3c. Language Map (ISO 639 -> Display Name) ────────────
@@ -793,17 +770,6 @@
         });
     }
 
-    // ── 3g. Concurrency limiter (process N promises at a time) ──
-    async function runBatched(tasks, limit) {
-        var results = [];
-        for (var i = 0; i < tasks.length; i += limit) {
-            var batch = tasks.slice(i, i + limit);
-            var batchResults = await Promise.allSettled(batch);
-            results = results.concat(batchResults);
-        }
-        return results;
-    }
-
     // ── 3h. Get Addon URLs (from manifest, fallback to defaults) ──
     function getStreamAddons() {
         // From plugin.json manifest — try streamAddons first, then addons
@@ -871,26 +837,7 @@
         return trackersCache;
     }
 
-    // ── 3i. Magnet Link Builder ───────────────────────────────
-    function buildMagnetLink(infoHash, sources, trackers) {
-        var magnet = "magnet:?xt=urn:btih:" + infoHash + "&dn=" + encodeURIComponent(infoHash);
-        if (sources && Array.isArray(sources)) {
-            for (var si = 0; si < sources.length; si++) {
-                var src = sources[si];
-                var trackerUrl = src.indexOf("tracker:") === 0 ? src.substring("tracker:".length) : src;
-                if (trackerUrl) magnet += "&tr=" + encodeURIComponent(trackerUrl);
-            }
-        }
-        var maxTrackers = 15, added = 0;
-        for (var ti = 0; ti < trackers.length && added < maxTrackers; ti++) {
-            if (magnet.indexOf("&tr=" + encodeURIComponent(trackers[ti])) === -1) {
-                magnet += "&tr=" + encodeURIComponent(trackers[ti]); added++;
-            }
-        }
-        return magnet;
-    }
-
-    // ── 3j. Stream Feature Parsing ────────────────────────────
+    // ── 3i. Stream Feature Parsing ────────────────────────────
     function parseStreamFeatures(str) {
         var result = {
             resolution: "Auto", codec: null, hdr: null, audio: null,
@@ -973,19 +920,21 @@
         var displayName = originalTitle || originalName || addonName;
 
         // ── Build StreamResult ──
-        // Handle proxy headers from addon's behaviorHints (critical for some CDNs)
-        var responseHeaders = {
-            "User-Agent": STREAM_USER_AGENT,
-            "Referer": baseUrl + "/",
-            "Origin": baseUrl
-        };
+        // Handle headers: start with addon's behaviorHints, add defaults only if missing
+        var responseHeaders = {};
         if (stream.behaviorHints) {
             if (stream.behaviorHints.proxyHeaders && stream.behaviorHints.proxyHeaders.request) {
-                responseHeaders = Object.assign({}, responseHeaders, stream.behaviorHints.proxyHeaders.request);
+                responseHeaders = Object.assign({}, stream.behaviorHints.proxyHeaders.request);
             } else if (stream.behaviorHints.headers) {
-                responseHeaders = Object.assign({}, responseHeaders, stream.behaviorHints.headers);
+                responseHeaders = Object.assign({}, stream.behaviorHints.headers);
             }
         }
+        if (!responseHeaders["User-Agent"]) responseHeaders["User-Agent"] = STREAM_USER_AGENT;
+        if (!responseHeaders["Referer"]) responseHeaders["Referer"] = baseUrl + "/";
+        if (!responseHeaders["Origin"]) responseHeaders["Origin"] = baseUrl;
+
+        // Extract resolution from stream name/title/url
+        var resolution = features.resolution !== "Auto" ? features.resolution : null;
 
         var result = {
             url: null,
@@ -995,8 +944,9 @@
             cached: stream.cached || false,
             size: stream.size || null,
             headers: responseHeaders,
-            behaviorHints: stream.behaviorHints || {}
-            // description intentionally omitted - StreamResult strips it
+            behaviorHints: stream.behaviorHints || {},
+            addonSource: addonName,
+            resolution: resolution
         };
 
         // --- 1) DIRECT HTTP(S) URL ---
@@ -1019,11 +969,21 @@
 
         // --- 2) TORRENT (infoHash) ---
         if (stream.infoHash) {
-            result.url = buildMagnetLink(stream.infoHash, stream.sources, trackers);
+            var filename = "";
+            if (stream.behaviorHints && stream.behaviorHints.filename) filename = stream.behaviorHints.filename;
+            else if (stream.title) filename = stream.title;
+            else if (stream.name) filename = stream.name;
+            result.url = "torrent:" + stream.infoHash + ":" + (stream.fileIdx || 0);
             result.infoHash = stream.infoHash;
-            result.fileIndex = stream.fileIdx !== undefined ? stream.fileIdx : 0;
+            result.fileIndex = stream.fileIdx || 0;
+            result.source = addonName;
+            result.title = filename;
             if (!result.behaviorHints || Object.keys(result.behaviorHints).length === 0) {
                 result.behaviorHints = { notWebReady: true };
+            }
+            // Attach trackers as sources so the runtime can use them
+            if (trackers && trackers.length > 0) {
+                result.sources = trackers.slice(0, 20).map(function(t) { return "tracker:" + t; });
             }
             return new StreamResult(result);
         }
@@ -1079,41 +1039,20 @@
         return LANG_MAP[key] || key.toUpperCase() || code;
     }
 
-    // ── 3l. Process Raw Streams from Addon ────────────────────
-    // Trackers are fetched lazily (only when first torrent is encountered)
-    var _trackersPromise = null;
-    var _trackersLoading = false;
-
-    async function getTrackersLazy() {
-        if (trackersCache) return trackersCache;
-        if (_trackersLoading) return _trackersPromise;
-        _trackersLoading = true;
-        _trackersPromise = getTrackers();
-        return _trackersPromise;
-    }
-
+    // ── 3k. Process Raw Streams from Addon ────────────────────
     async function processStreamResponse(streams, addonName, baseUrl) {
         if (!streams || !Array.isArray(streams)) return [];
-        var trackersPromise = null;
         var results = [];
-
         for (var s = 0; s < streams.length; s++) {
             try {
-                // Only fetch trackers if we actually have torrent streams
-                if (!trackersPromise && streams[s] && streams[s].infoHash) {
-                    trackersPromise = getTrackersLazy();
-                }
-                var trackers = trackersPromise ? await trackersPromise : [];
-                var formatted = formatStream(streams[s], addonName, baseUrl, trackers);
+                var formatted = formatStream(streams[s], addonName, baseUrl);
                 if (formatted) results.push(formatted);
-            } catch (e) {
-                // Skip problematic streams silently
-            }
+            } catch (e) {}
         }
         return results;
     }
 
-    // ── 3m. Subtitle Fetching (OpenSubtitles) ─────────────────
+    // ── 3l. Subtitle Fetching (OpenSubtitles) ─────────────────
     async function fetchSubtitles(imdbId, season, episode) {
         if (!imdbId || imdbId.indexOf("tt") !== 0) return [];
         try {
@@ -1121,7 +1060,7 @@
                 ? "series/" + imdbId + ":" + season + ":" + episode
                 : "movie/" + imdbId;
             var url = "https://opensubtitles-v3.strem.io/subtitles/" + slug + ".json";
-            var data = await fetchWithTimeout(url, STREAM_HEADERS, SUBTITLE_TIMEOUT);
+            var data = await fetchWithTimeout(url, STREAM_HEADERS, 15000);
             if (data && data.subtitles) {
                 return data.subtitles.map(function(sub) {
                     return { url: sub.url, lang: normalizeLang(sub.lang), label: normalizeLang(sub.lang) };
@@ -1131,7 +1070,7 @@
         return [];
     }
 
-    // ── 3n. TMDB ID → IMDb ID resolution (cached) ─────────────
+    // ── 3m. TMDB ID → IMDb ID resolution (cached) ─────────────
     var TMDBID_CACHE_TTL = 86400000; // 24h cache for ID lookups
     async function tmdbIdToImdb(tmdbId, mediaType) {
         var cacheKey = tmdbId + "|" + (mediaType || "");
@@ -1283,43 +1222,31 @@
                 ? (season > 0 ? fetchSubtitles(imdbId, season, episode) : fetchSubtitles(imdbId, 0, 0))
                 : Promise.resolve([]);
 
-            // ── Query addons with a global deadline ──
-            //    We return whatever we have after GLOBAL_DEADLINE_MS at most.
+            // ── Query ALL addons in parallel (no limit) ──
             var allStreams = [];
-            var deadlineTimer = null;
 
             if (addonUrls.length > 0) {
                 slog("info", "Querying " + addonUrls.length + " addons with IDs: " + idsToTry.join(", "));
-                var tasks = [];
-                // Track addon index for priority sorting
-                addonUrls.forEach(function(addonUrl, addonIdx) {
-                    idsToTry.forEach(function(tryId) {
-                        tasks.push({ task: queryAddon(addonUrl, type, tryId, season, episode), priority: addonIdx });
+                var tasks = addonUrls.map(function(addonUrl, addonIdx) {
+                    return idsToTry.map(function(tryId) {
+                        return queryAddon(addonUrl, type, tryId, season, episode).then(function(streams) {
+                            if (streams && streams.length > 0) {
+                                streams.forEach(function(s) { s._priority = addonIdx; });
+                                return streams;
+                            }
+                            return [];
+                        });
                     });
                 });
-
-                // Run batches, but race against a deadline
-                var queryPromise = (async function() {
-                    for (var bi = 0; bi < tasks.length; bi += CONCURRENCY_LIMIT) {
-                        var batch = tasks.slice(bi, bi + CONCURRENCY_LIMIT);
-                        var batchResults = await Promise.allSettled(batch.map(function(t) { return t.task; }));
-                        batchResults.forEach(function(r, ri) {
-                            if (r.status === "fulfilled" && r.value && r.value.length > 0) {
-                                var priority = batch[ri].priority;
-                                // Tag each stream with its addon priority
-                                r.value.forEach(function(s) { s._priority = priority; });
-                                allStreams = allStreams.concat(r.value);
-                            }
-                        });
+                // Flatten nested arrays
+                var flat = [];
+                tasks.forEach(function(t) { flat = flat.concat(t); });
+                var results = await Promise.allSettled(flat);
+                results.forEach(function(r) {
+                    if (r.status === "fulfilled" && r.value && r.value.length > 0) {
+                        allStreams = allStreams.concat(r.value);
                     }
-                })();
-
-                // Race: all batches done vs deadline
-                var deadlinePromise = new Promise(function(resolve) {
-                    deadlineTimer = setTimeout(resolve, GLOBAL_DEADLINE_MS);
                 });
-                await Promise.race([queryPromise, deadlinePromise]);
-                clearTimeout(deadlineTimer);
             }
 
             // ── Torrentio fallback if no streams (quick, single attempt) ──
