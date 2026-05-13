@@ -1239,6 +1239,7 @@
             };
 
             // Try URL patterns (single attempt)
+            var urlsToTry = [
                 baseUrl + "/stream/" + type + "/" + encodedId + ".json"
             ];
             if (season > 0 && episode > 0) {
