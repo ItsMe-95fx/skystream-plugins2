@@ -1,0 +1,9 @@
+{
+  "name": "Multi source",
+  "packageName": "dev.skystream.repo",
+  "description": "plugin repository",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/plugins.json"
+  ]
+}
