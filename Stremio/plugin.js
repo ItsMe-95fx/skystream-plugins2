@@ -644,17 +644,7 @@
     var ADDON_TIMEOUT_MS = 30000;       // 30s per addon query
     var STREAM_CACHE_TTL = 600000;      // 10 min cache
 
-    // Fallback addons — used when plugin.json manifest is not available
-    var FALLBACK_ADDONS = [
-        "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,nekobt/manifest.json",
-        "https://flixnest.app/flix-finder/eyJxdWFsaXR5IjpbIjEwODBwIiwiNzIwcCJdfQ/manifest.json",
-        "https://hdhub.thevolecitor.qzz.io/manifest.json",
-        "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
-        "https://dramayo.stream/manifest.json",
-        "https://streamvix.hayd.uk/manifest.json",
-        "https://mediafusion.elfhosted.com/manifest.json",
-        "https://watcho3.rafaelzioneverest.workers.dev/manifest.json"
-    ];
+
 
     // ── 3b. Caches ────────────────────────────────────────────
     var streamResultCache = {};
@@ -782,7 +772,7 @@
         });
     }
 
-    // ── 3h. Get Addon URLs (from manifest, with hardcoded fallback) ──
+    // ── 3h. Get Addon URLs from manifest ──
     function getStreamAddons() {
         try {
             if (typeof manifest !== 'undefined' && manifest) {
@@ -790,8 +780,7 @@
                 if (manifest.streamAddons && Array.isArray(manifest.streamAddons)) return manifest.streamAddons;
             }
         } catch (e) {}
-        // If manifest not available, use hardcoded fallback
-        return FALLBACK_ADDONS;
+        return [];
     }
 
     function extractSourceName(addonUrl) {
@@ -985,7 +974,7 @@
             result.url = "torrent:" + stream.infoHash + ":" + (stream.fileIdx || 0);
             result.infoHash = stream.infoHash;
             result.fileIndex = stream.fileIdx || 0;
-            result.source = addonName;
+            result.source = displayName;  // Use original name, not just addonName
             result.title = filename;
             if (!result.behaviorHints || Object.keys(result.behaviorHints).length === 0) {
                 result.behaviorHints = { notWebReady: true };
