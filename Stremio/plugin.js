@@ -644,6 +644,18 @@
     var ADDON_TIMEOUT_MS = 30000;       // 30s per addon query
     var STREAM_CACHE_TTL = 600000;      // 10 min cache
 
+    // Fallback addons — used when plugin.json manifest is not available
+    var FALLBACK_ADDONS = [
+        "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,nekobt/manifest.json",
+        "https://flixnest.app/flix-finder/eyJxdWFsaXR5IjpbIjEwODBwIiwiNzIwcCJdfQ/manifest.json",
+        "https://hdhub.thevolecitor.qzz.io/manifest.json",
+        "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
+        "https://dramayo.stream/manifest.json",
+        "https://streamvix.hayd.uk/manifest.json",
+        "https://mediafusion.elfhosted.com/manifest.json",
+        "https://watcho3.rafaelzioneverest.workers.dev/manifest.json"
+    ];
+
     // ── 3b. Caches ────────────────────────────────────────────
     var streamResultCache = {};
     var tmdbIdCache = {};           // tmdbId → imdbId cache
@@ -770,19 +782,16 @@
         });
     }
 
-    // ── 3h. Get Addon URLs (from manifest, fallback to defaults) ──
+    // ── 3h. Get Addon URLs (from manifest, with hardcoded fallback) ──
     function getStreamAddons() {
-        // manifest is a global injected by the skystream runtime
-        // access it directly (not via globalThis, which may not have it)
-        var m = (typeof manifest !== 'undefined') ? manifest : null;
-        if (!m && typeof globalThis !== 'undefined' && globalThis.manifest) {
-            m = globalThis.manifest;
-        }
-        if (m) {
-            if (m.streamAddons && Array.isArray(m.streamAddons)) return m.streamAddons;
-            if (m.addons && Array.isArray(m.addons)) return m.addons;
-        }
-        return [];
+        try {
+            if (typeof manifest !== 'undefined' && manifest) {
+                if (manifest.addons && Array.isArray(manifest.addons)) return manifest.addons;
+                if (manifest.streamAddons && Array.isArray(manifest.streamAddons)) return manifest.streamAddons;
+            }
+        } catch (e) {}
+        // If manifest not available, use hardcoded fallback
+        return FALLBACK_ADDONS;
     }
 
     function extractSourceName(addonUrl) {
@@ -1090,19 +1099,17 @@
         }
     }
 
-    // ── 3o. Torrentio Fallback — only if user has Torrentio in their addons ──
-    function findTorrentioBaseUrl() {
+    // ── 3o. Torrentio Fallback — only if Torrentio URL is in the addon list ──
+    function findTorrentioUrl() {
         var addons = getStreamAddons();
         for (var i = 0; i < addons.length; i++) {
-            if (addons[i].indexOf("torrentio") !== -1) {
-                return fixSourceUrl(addons[i]);
-            }
+            if (addons[i].indexOf("torrentio") !== -1) return fixSourceUrl(addons[i]);
         }
-        return null; // not configured, no fallback
+        return null;
     }
     async function tryTorrentioFallback(id, type, season, episode) {
-        var baseUrl = findTorrentioBaseUrl();
-        if (!baseUrl) return []; // user removed Torrentio, skip
+        var baseUrl = findTorrentioUrl();
+        if (!baseUrl) return [];
         try {
             var encodedId = encodeURIComponent(id);
             var url = baseUrl + "/stream/" + type + "/" + encodedId;
@@ -1110,7 +1117,7 @@
             url += ".json";
             var data = await fetchWithTimeout(url, STREAM_HEADERS, ADDON_TIMEOUT_MS);
             if (data && data.streams) return await processStreamResponse(data.streams, "Torrentio", baseUrl);
-        } catch (e) { slog("warn", "Torrentio fallback failed", e.message); }
+        } catch (e) {}
         return [];
     }
 
