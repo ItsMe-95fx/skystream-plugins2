@@ -19,8 +19,8 @@
     // ── Constants ──────────────────────────────────────────────────
     var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
     var JSON_HEADERS = { "User-Agent": UA, "Accept": "application/json", "Accept-Language": "en-US,en;q=0.5" };
-    var ADDON_TIMEOUT = 30000;
-    var CACHE_TTL = 600000;
+    var ADDON_TIMEOUT = 10000;
+    var CACHE_TTL = 3600000;
     var _cache = {};
 
     // ── Content type mapping ───────────────────────────────────────
@@ -93,7 +93,7 @@
     function getManifest(url) {
         var k = "mf:" + url;
         var c = cGet(k); if (c) return Promise.resolve(c);
-        return fetchTimeout(url, null, 8000).then(function(d) { if (d) cSet(k, d); return d; });
+        return fetchTimeout(url, null, 12000).then(function(d) { if (d) cSet(k, d); return d; });
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -164,62 +164,47 @@
             var urls = getCatalogueAddons();
             if (!urls.length) return cb({ success: false, errorCode: "NO_ADDONS", message: "No catalogueAddons" });
 
-            // Process ALL addons in parallel with a global deadline
+            // Process ALL addons sequentially but with fast timeouts
+            // Sequential is slower but more reliable across different runtimes
+            var data = {};
+            var order = [];
             var DEADLINE = 25000;
-            var results = { data: {}, order: [] };
+            var startTime = Date.now();
 
-            var addonPromises = urls.map(function(addonUrl, ai) {
-                return (async function() {
-                    try {
-                        var mf = await getManifest(addonUrl);
-                        if (!mf || !Array.isArray(mf.catalogs) || !mf.catalogs.length) return;
-                        var bu = baseUrl(addonUrl);
-                        var an = addonName(addonUrl);
+            for (var ai = 0; ai < urls.length; ai++) {
+                try {
+                    if (Date.now() - startTime > DEADLINE) break;
+                    var mf = await getManifest(urls[ai]);
+                    if (!mf || !Array.isArray(mf.catalogs) || !mf.catalogs.length) continue;
+                    var bu = baseUrl(urls[ai]);
+                    var an = addonName(urls[ai]);
 
-                        // Fetch all catalogs for this addon in PARALLEL
-                        var catPromises = [];
-                        for (var ci = 0; ci < mf.catalogs.length; ci++) {
-                            catPromises.push((function(cat) {
-                                return (async function() {
-                                    try {
-                                        if (!cat || !cat.id || !cat.type) return null;
-                                        var extras = cat.extra || [];
-                                        if (extras.some(function(e) { return e && e.name === "search" && e.isRequired === true; })) return null;
+                    for (var ci = 0; ci < mf.catalogs.length; ci++) {
+                        try {
+                            if (Date.now() - startTime > DEADLINE) break;
+                            var cat = mf.catalogs[ci];
+                            if (!cat || !cat.id || !cat.type) continue;
+                            if ((cat.extra || []).some(function(e) { return e && e.name === "search" && e.isRequired === true; })) continue;
 
-                                        var url = bu + "/catalog/" + cat.type + "/" + cat.id + ".json";
-                                        if (pn > 1) url += (url.indexOf("?") === -1 ? "?" : "&") + "skip=" + ((pn - 1) * 20);
+                            var url = bu + "/catalog/" + cat.type + "/" + cat.id + ".json";
+                            if (pn > 1) url += (url.indexOf("?") === -1 ? "?" : "&") + "skip=" + ((pn - 1) * 20);
 
-                                        var d = await fetchTimeout(url, null, 5000);
-                                        if (!d || !Array.isArray(d.metas) || !d.metas.length) return null;
+                            var d = await fetchTimeout(url, null, 8000);
+                            if (!d || !Array.isArray(d.metas) || !d.metas.length) continue;
 
-                                        var items = d.metas.map(function(m) { return toItem(m, cat.type); }).filter(Boolean);
-                                        if (!items.length) return null;
+                            var items = d.metas.map(function(m) { return toItem(m, cat.type); }).filter(Boolean);
+                            if (!items.length) continue;
 
-                                        return { name: (urls.length > 1) ? (an + " - " + (cat.name || cat.id)) : (cat.name || cat.id), items: items };
-                                    } catch (e) { return null; }
-                                })();
-                            })(mf.catalogs[ci]));
-                        }
+                            var sn = (urls.length > 1) ? (an + " - " + (cat.name || cat.id)) : (cat.name || cat.id);
+                            if (!data[sn]) { data[sn] = items; order.push(sn); }
+                        } catch (e) { /* skip */ }
+                    }
+                } catch (e) { /* skip */ }
+            }
 
-                        var settled = await Promise.allSettled(catPromises);
-                        for (var ri = 0; ri < settled.length; ri++) {
-                            var r = settled[ri];
-                            if (r.status === "fulfilled" && r.value && !results.data[r.value.name]) {
-                                results.data[r.value.name] = r.value.items;
-                                results.order.push(r.value.name);
-                            }
-                        }
-                    } catch (e) { /* skip */ }
-                })();
-            });
-
-            // Race against deadline
-            var deadlinePromise = new Promise(function(r) { setTimeout(r, DEADLINE); });
-            await Promise.race([Promise.allSettled(addonPromises), deadlinePromise]);
-
-            if (!Object.keys(results.data).length) return cb({ success: false, errorCode: "NO_DATA", message: "No catalog data" });
+            if (!Object.keys(data).length) return cb({ success: false, errorCode: "NO_DATA", message: "No catalog data" });
             var out = {};
-            for (var i = 0; i < results.order.length; i++) { if (results.data[results.order[i]]) out[results.order[i]] = results.data[results.order[i]]; }
+            for (var i = 0; i < order.length; i++) { if (data[order[i]]) out[order[i]] = data[order[i]]; }
             cb({ success: true, data: out, page: pn });
         } catch (e) {
             console.error("[Hub] getHome:", e.message || e);
@@ -267,7 +252,7 @@
                         try {
                             var sc = searchCats[si];
                             var surl = bu + "/catalog/" + sc.type + "/" + sc.id + "/search=" + encodeURIComponent(query) + ".json";
-                            var d = await fetchTimeout(surl, null, 15000);
+                            var d = await fetchTimeout(surl, null, 8000);
                             if (d && Array.isArray(d.metas) && d.metas.length) {
                                 foundSearch = true;
                                 for (var mi = 0; mi < d.metas.length && all.length < 50; mi++) addItem(toItem(d.metas[mi], sc.type));
@@ -280,7 +265,7 @@
                             try {
                                 var bc = browseCats[bi];
                                 var bUrl = bu + "/catalog/" + bc.type + "/" + bc.id + ".json";
-                                var d2 = await fetchTimeout(bUrl, null, 10000);
+                                var d2 = await fetchTimeout(bUrl, null, 5000);
                                 if (d2 && Array.isArray(d2.metas)) {
                                     for (var mi = 0; mi < d2.metas.length && all.length < 50; mi++) {
                                         var m = d2.metas[mi];
@@ -391,7 +376,7 @@
             }
 
             // Wait for all parallel meta requests to complete (60s max for huge series like One Piece)
-            await new Promise(function(r) { setTimeout(r, 60000); });
+            await new Promise(function(r) { setTimeout(r, 20000); });
 
             // Pick the BEST result by score (videos > cast > description)
             if (results.length) {
@@ -814,7 +799,7 @@
 
                 return urlsToTry.reduce(function(chain, surl) {
                     return chain.then(function() {
-                        return fetchTimeout(surl, null, 10000).then(function(d) {
+                        return fetchTimeout(surl, null, 8000).then(function(d) {
                             if (!d || !Array.isArray(d.subtitles)) return;
                             for (var si = 0; si < d.subtitles.length; si++) {
                                 try {
@@ -870,44 +855,33 @@
             var typeStr = (mediaType === "tv" || mediaType === "series" || mediaType === "anime") ? "series" : "movie";
             var allStreams = [];
 
-            // ── 1) Fetch streams from ALL addons in PARALLEL ──
+            // ── 1) Fetch streams from ALL addons (sequential, reliable) ──
             var sAddons = getStreamingAddons();
             if (sAddons.length) {
-                var tasks = [];
                 for (var ai = 0; ai < sAddons.length; ai++) {
-                    (function(addonUrl) {
-                        tasks.push((async function() {
-                            try {
-                                var bu = baseUrl(addonUrl);
-                                var an = addonName(addonUrl);
-                                var urlsToTry = [];
-                                var eid = encodeURIComponent(metaId);
+                    try {
+                        var addonUrl = sAddons[ai];
+                        var bu = baseUrl(addonUrl);
+                        var an = addonName(addonUrl);
+                        var urlsToTry = [];
+                        var eid = encodeURIComponent(metaId);
 
-                                if (typeStr === "series" && season > 0 && episode > 0) {
-                                    urlsToTry.push(bu + "/stream/" + typeStr + "/" + encodeURIComponent(metaId + ":" + season + ":" + episode) + ".json");
-                                }
-                                urlsToTry.push(bu + "/stream/" + typeStr + "/" + eid + ".json");
-                                if (isImdbId(metaId)) {
-                                    urlsToTry.push(bu + "/stream/" + typeStr + "/" + encodeURIComponent("tmdb:" + metaId) + ".json");
-                                }
+                        if (typeStr === "series" && season > 0 && episode > 0) {
+                            urlsToTry.push(bu + "/stream/" + typeStr + "/" + encodeURIComponent(metaId + ":" + season + ":" + episode) + ".json");
+                        }
+                        urlsToTry.push(bu + "/stream/" + typeStr + "/" + eid + ".json");
+                        if (isImdbId(metaId)) {
+                            urlsToTry.push(bu + "/stream/" + typeStr + "/" + encodeURIComponent("tmdb:" + metaId) + ".json");
+                        }
 
-                                for (var ui = 0; ui < urlsToTry.length; ui++) {
-                                    var sd = await fetchTimeout(urlsToTry[ui], null, ADDON_TIMEOUT);
-                                    if (sd && Array.isArray(sd.streams) && sd.streams.length) {
-                                        return { addon: an, streams: processStreams(sd.streams, an, bu) };
-                                    }
-                                }
-                                return null;
-                            } catch (e) { return null; }
-                        })());
-                    })(sAddons[ai]);
-                }
-
-                var settled = await Promise.allSettled(tasks);
-                for (var ri = 0; ri < settled.length; ri++) {
-                    if (settled[ri].status === "fulfilled" && settled[ri].value) {
-                        allStreams = allStreams.concat(settled[ri].value.streams);
-                    }
+                        for (var ui = 0; ui < urlsToTry.length; ui++) {
+                            var sd = await fetchTimeout(urlsToTry[ui], null, ADDON_TIMEOUT);
+                            if (sd && Array.isArray(sd.streams) && sd.streams.length) {
+                                allStreams = allStreams.concat(processStreams(sd.streams, an, bu));
+                                break; // Found streams for this addon, move to next
+                            }
+                        }
+                    } catch (e) { /* skip */ }
                 }
             }
 
