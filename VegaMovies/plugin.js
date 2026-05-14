@@ -308,7 +308,14 @@
         // Try V-Cloud / HubCloud extraction
         if (lower.indexOf('vcloud') >= 0 || lower.indexOf('hubcloud') >= 0 || lower.indexOf('nexdrive') >= 0) {
             await extractVcStream(vcUrl, function(su, q, sn, lb) {
-                streams.push({ url: su, source: sn ? sn + ' ' + lb : lb, headers: { 'Referer': referer } });
+                var qLabel = q ? q + 'p' : '';
+                streams.push({
+                    url: su,
+                    name: (sn || '') + (sn && qLabel ? ' ' : '') + qLabel,
+                    source: sn ? sn + ' ' + lb : lb,
+                    quality: q,
+                    headers: { 'Referer': referer }
+                });
             });
         }
 
@@ -514,9 +521,12 @@
                     var sn = parseInt(parts[0]) || 1;
                     var en = parseInt(parts[1]) || (ki + 1);
                     var srcs = epMap[keys[ki]];
+                    // Encode all quality source URLs as a special URL format.
+                    // Platform accepts HTTP URLs; loadStreams decodes the multi-source info.
+                    var multiUrl = 'https://vm.sources/' + encodeURIComponent(JSON.stringify(srcs));
                     episodes.push({
                         name: 'S' + sn + ' E' + en,
-                        url: JSON.stringify(srcs),
+                        url: multiUrl,
                         season: sn,
                         episode: en,
                         posterUrl: poster || '',
@@ -565,33 +575,36 @@
 
     async function loadStreams(url, cb) {
         try {
-            // JSON array of V-Cloud URLs (series episode with multiple quality sources)
-            if (typeof url === 'string' && url.indexOf('[') === 0) {
+            // Multi-source URL: https://vm.sources/<encoded JSON array of vcloud URLs>
+            if (typeof url === 'string' && url.indexOf('https://vm.sources/') === 0) {
                 try {
-                    var srcs = JSON.parse(url);
+                    var encoded = url.replace('https://vm.sources/', '');
+                    var srcs = JSON.parse(decodeURIComponent(encoded));
                     if (Array.isArray(srcs) && srcs.length > 0) {
                         var allStreams = [];
                         for (var si = 0; si < srcs.length; si++) {
                             try {
                                 var st = await withTimeout(function() { return extractSingleVc(srcs[si], url); }, 60000);
                                 for (var sj = 0; sj < st.length; sj++) {
-                                    var dup = false;
+                                    var isDup = false;
                                     for (var sk = 0; sk < allStreams.length; sk++) {
-                                        if (allStreams[sk].url === st[sj].url) { dup = true; break; }
+                                        if (allStreams[sk].url === st[sj].url) { isDup = true; break; }
                                     }
-                                    if (!dup) allStreams.push(st[sj]);
+                                    if (!isDup) allStreams.push(st[sj]);
                                 }
                             } catch(e) {}
                         }
+                        // Sort by quality descending so best quality appears first
+                        allStreams.sort(function(a, b) { return (b.quality || 0) - (a.quality || 0); });
                         cb({ success: true, data: allStreams });
                         return;
                     }
-                } catch(e) {}
+                } catch(e) { /* fall through to normal handling */ }
             }
 
             var lower = url.toLowerCase();
 
-            // Direct V-Cloud/HubCloud URL (series episodes with single quality)
+            // Direct V-Cloud/HubCloud URL (series episodes)
             if (lower.indexOf('vcloud') >= 0 || lower.indexOf('hubcloud') >= 0) {
                 var st = await withTimeout(function() { return extractSingleVc(url, url); }, 60000);
                 cb({ success: true, data: st });
