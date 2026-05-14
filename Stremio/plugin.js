@@ -374,13 +374,6 @@
         return results;
     }
 
-    // ── Helper to build a single category promise ──
-    function homeCategory(name, endpoint, params, mediaType, page) {
-        return fetchPage(endpoint, params, mediaType, page).then(function(items) {
-            if (items.length > 0) R[name] = items;
-        });
-    }
-
     // ============================================================
     //  getHome — paginated, page=1 returns first 20 items per category
     // ============================================================
@@ -392,18 +385,25 @@
             var lang = "en-US";
             var deadlineTimer = null;
 
+            // Helper: fetch a page and store in R if results > 0
+            function cat(name, endpoint, params, mediaType, pg) {
+                return fetchPage(endpoint, params, mediaType, pg).then(function(items) {
+                    if (items.length > 0) R[name] = items;
+                });
+            }
+
             var allPromises = [
-                homeCategory("Trending Now", "/trending/all/day", { language: lang }, null, pageNum),
-                homeCategory("New Releases", "/movie/now_playing", { language: lang, region: "US" }, "movie", pageNum),
-                homeCategory("Currently Airing", "/tv/on_the_air", { language: lang }, "tv", pageNum),
-                homeCategory("Trending Movies", "/trending/movie/day", { language: lang }, "movie", pageNum),
-                homeCategory("Trending Series", "/trending/tv/day", { language: lang }, "tv", pageNum),
-                homeCategory("Popular Movies This Week", "/trending/movie/week", { language: lang }, "movie", pageNum),
-                homeCategory("Popular Series This Week", "/trending/tv/week", { language: lang }, "tv", pageNum),
-                homeCategory("Popular Movies", "/movie/popular", { language: lang }, "movie", pageNum),
-                homeCategory("Popular Series", "/tv/popular", { language: lang }, "tv", pageNum),
-                homeCategory("Top Rated Movies", "/movie/top_rated", { language: lang }, "movie", pageNum),
-                homeCategory("Top Rated Series", "/tv/top_rated", { language: lang }, "tv", pageNum),
+                cat("Trending Now", "/trending/all/day", { language: lang }, null, pageNum),
+                cat("New Releases", "/movie/now_playing", { language: lang, region: "US" }, "movie", pageNum),
+                cat("Currently Airing", "/tv/on_the_air", { language: lang }, "tv", pageNum),
+                cat("Trending Movies", "/trending/movie/day", { language: lang }, "movie", pageNum),
+                cat("Trending Series", "/trending/tv/day", { language: lang }, "tv", pageNum),
+                cat("Popular Movies This Week", "/trending/movie/week", { language: lang }, "movie", pageNum),
+                cat("Popular Series This Week", "/trending/tv/week", { language: lang }, "tv", pageNum),
+                cat("Popular Movies", "/movie/popular", { language: lang }, "movie", pageNum),
+                cat("Popular Series", "/tv/popular", { language: lang }, "tv", pageNum),
+                cat("Top Rated Movies", "/movie/top_rated", { language: lang }, "movie", pageNum),
+                cat("Top Rated Series", "/tv/top_rated", { language: lang }, "tv", pageNum),
 
                 // Anime & animation
                 fetchFiltered("/trending/tv/day", { language: lang, page: pageNum }, isAnime, "tv", 20).then(function(x) { if (x.length) R["Trending Anime"] = x; }),
