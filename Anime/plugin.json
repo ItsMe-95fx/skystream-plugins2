@@ -1,12 +1,12 @@
 {
-  "packageName": "dev.sunriseve.stremiohub",
-  "name": "Stremio Hub",
+  "packageName": "com.cookie.Anime",
+  "name": "Anime",
   "version": 1,
   "baseUrl": "https://stremio-hub.local",
   "description": "Pure addon-driven Stremio interface for SkyStream. getHome/search/load fetch from catalogueAddons manifests. loadStreams aggregates streamingAddons with full formatStream/parseStreamFeatures engine. Supports HTTP/HLS/torrent/YouTube.",
-  "authors": ["sunriseve"],
+  "authors": ["Cookie\ud83c\udf6a"],
   "languages": ["en"],
-  "categories": ["Movies", "TV", "Anime"],
+  "categories": ["Anime"],
   "catalogueAddons": [
     "https://animestream-addon.keypop3750.workers.dev/sm=https|sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,n_5,a_dub,a_sub,q_720,q_480/manifest.json"
   ],
