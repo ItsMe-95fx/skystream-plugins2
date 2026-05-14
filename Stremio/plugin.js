@@ -338,9 +338,9 @@
             var us = await tmdb("/movie/now_playing", { language: "en-US", region: "US", page: page });
             if (us && us.results) items = items.concat(us.results);
         } catch (e) {}
-        // Indian new releases (Bollywood/Tollywood/Kollywood)
+        // Indian new releases (Bollywood/Tollywood/Kollywood) — English titles
         try {
-            var ind = await tmdb("/movie/now_playing", { language: "hi-IN", region: "IN", page: page });
+            var ind = await tmdb("/movie/now_playing", { language: "en-US", region: "IN", page: page });
             if (ind && ind.results) items = items.concat(ind.results);
         } catch (e) {}
         // Deduplicate by id
@@ -371,37 +371,44 @@
         var HOME_DEADLINE = 35000;
         var pageNum = parseInt(page) || 1;
         try {
-            var R = {};
-            var lang = "en-US";
-            var deadlineTimer = null;
-
-            function addCategory(name, endpoint, params, mediaType, pg) {
-                return fetchPage(endpoint, params, mediaType, pg).then(function(items) {
-                    if (items.length > 0) R[name] = items;
-                });
-            }
-
-            var allPromises = [
-                addCategory("Trending Now", "/trending/all/day", { language: lang }, null, pageNum),
-                fetchNewReleases(pageNum).then(function(x) { if (x.length) R["New Releases"] = x; }),
-                addCategory("Currently Airing", "/tv/on_the_air", { language: lang }, "tv", pageNum),
-                fetchPopularThisMonth(pageNum).then(function(x) { if (x.length) R["Popular This Month"] = x; }),
-                addCategory("Popular Movies", "/movie/popular", { language: lang }, "movie", pageNum),
-                addCategory("Popular Series", "/tv/popular", { language: lang }, "tv", pageNum),
-                addCategory("Top Rated Movies", "/movie/top_rated", { language: lang }, "movie", pageNum),
-                addCategory("Top Rated Series", "/tv/top_rated", { language: lang }, "tv", pageNum),
-                fetchFiltered("/trending/tv/day", { language: lang, page: pageNum }, isAnime, "tv", 20).then(function(x) { if (x.length) R["Trending Anime"] = x; }),
-                fetchFiltered("/trending/tv/day", { language: lang, page: pageNum }, isWesternAnim, "tv", 20).then(function(x) { if (x.length) R["Trending Animation"] = x; })
+            var cats = [
+                "Trending Now", "New Releases", "Currently Airing",
+                "Popular This Month", "Popular Movies", "Popular Series",
+                "Top Rated Movies", "Top Rated Series",
+                "Trending Anime", "Trending Animation"
             ];
+            var fetches = {
+                "Trending Now": fetchPage("/trending/all/day", { language: "en-US" }, null, pageNum),
+                "New Releases": fetchNewReleases(pageNum),
+                "Currently Airing": fetchPage("/tv/on_the_air", { language: "en-US" }, "tv", pageNum),
+                "Popular This Month": fetchPopularThisMonth(pageNum),
+                "Popular Movies": fetchPage("/movie/popular", { language: "en-US" }, "movie", pageNum),
+                "Popular Series": fetchPage("/tv/popular", { language: "en-US" }, "tv", pageNum),
+                "Top Rated Movies": fetchPage("/movie/top_rated", { language: "en-US" }, "movie", pageNum),
+                "Top Rated Series": fetchPage("/tv/top_rated", { language: "en-US" }, "tv", pageNum),
+                "Trending Anime": fetchFiltered("/trending/tv/day", { language: "en-US", page: pageNum }, isAnime, "tv", 20),
+                "Trending Animation": fetchFiltered("/trending/tv/day", { language: "en-US", page: pageNum }, isWesternAnim, "tv", 20)
+            };
 
+            var deadlineTimer = null;
+            var values = Object.keys(fetches).map(function(k) { return fetches[k]; });
             var deadlineP = new Promise(function(resolve) { deadlineTimer = setTimeout(resolve, HOME_DEADLINE); });
-            await Promise.race([Promise.allSettled(allPromises), deadlineP]);
+            var settled = await Promise.race([Promise.allSettled(values), deadlineP]);
             clearTimeout(deadlineTimer);
 
+            // If deadline won, settled is undefined — wait for actual results with a short delay
+            if (!settled || !Array.isArray(settled)) {
+                settled = await Promise.allSettled(values);
+            }
+
+            // Build response in FIXED order — never jumps
             var clean = {};
-            for (var cat in R) {
-                if (R.hasOwnProperty(cat) && R[cat] && R[cat].length > 0) {
-                    clean[cat] = R[cat];
+            for (var ci = 0; ci < cats.length; ci++) {
+                var name = cats[ci];
+                var idx = Object.keys(fetches).indexOf(name);
+                var r = settled[idx];
+                if (r && r.status === "fulfilled" && r.value && r.value.length > 0) {
+                    clean[name] = r.value;
                 }
             }
 
