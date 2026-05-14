@@ -522,12 +522,12 @@
 
             if (isTv && details) {
                 var seasonList = details.seasons || [];
-                // Fetch seasons in parallel with a 15s deadline
+                // Fetch all seasons in parallel — 30 takes same time as 8
                 var LOAD_DEADLINE = 15000;
                 var deadlineTimer = null;
                 var seasonTasks = [];
                 var fetched = 0;
-                var maxSeasonsToFetch = 15; // Reduced from 25 for speed
+                var maxSeasonsToFetch = 30;
 
                 for (var si = 0; si < seasonList.length && fetched < maxSeasonsToFetch; si++) {
                     var seasonInfo = seasonList[si];
@@ -558,7 +558,8 @@
                                     episodeNumber: epNum,
                                     title: title,
                                     episodeTitle: ep.name || "",
-                                    stillPath: ep.still_path
+                                    stillPath: ep.still_path,
+                                    imdbId: imdbId
                                 }),
                                 season: seasonNum,
                                 episode: epNum,
@@ -589,7 +590,8 @@
                         mediaType: mediaType,
                         title: title,
                         year: year,
-                        posterPath: posterPath
+                        posterPath: posterPath,
+                        imdbId: imdbId
                     }),
                     season: 1,
                     episode: 1,
@@ -1179,10 +1181,14 @@
                 // Always try tmdb: prefix first
                 idsToTry.push("tmdb:" + decoded.tmdbId);
 
-                // Try to resolve IMDb ID (cached)
-                imdbId = await tmdbIdToImdb(decoded.tmdbId, decoded.mediaType);
-                if (imdbId && idsToTry.indexOf(imdbId) === -1) {
-                    idsToTry.push(imdbId);
+                // Use imdbId from URL if load() already resolved it (saves a TMDB call)
+                if (decoded.imdbId) {
+                    imdbId = decoded.imdbId;
+                    if (idsToTry.indexOf(imdbId) === -1) idsToTry.push(imdbId);
+                } else {
+                    // Try to resolve IMDb ID (cached)
+                    imdbId = await tmdbIdToImdb(decoded.tmdbId, decoded.mediaType);
+                    if (imdbId && idsToTry.indexOf(imdbId) === -1) idsToTry.push(imdbId);
                 }
             } else {
                 type = decoded.mediaType || "movie";
