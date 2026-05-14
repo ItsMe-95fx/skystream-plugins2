@@ -315,15 +315,6 @@
         return all.slice(0, maxItems).map(function(r) { return toItem(r, { mediaType: "movie" }); });
     }
 
-    // ── OTT watch provider IDs ──
-    var OTT_PROVIDERS = {
-        "Netflix": "8",
-        "Prime Video": "9",
-        "Disney+": "337",
-        "HBO Max": "384",
-        "Apple TV+": "350"
-    };
-
     // ── Fetch a single page from TMDB and convert to items ──
     async function fetchPage(endpoint, params, mediaType, page) {
         try {
@@ -338,44 +329,43 @@
         return [];
     }
 
-    // ── Fetch OTT category (movies + series on a platform) ──
-    async function fetchOttPage(providerId, page) {
+    // ── Fetch global + Indian new releases and merge ──
+    async function fetchNewReleases(page) {
         page = page || 1;
-        var results = [];
-        // Interleave: even pages = movies, odd pages = series
-        // Page 1: 10 movies, Page 2: 10 series, Page 3: 10 movies, etc.
-        if (page % 2 === 1 || page === 1) {
-            var moviePage = Math.ceil(page / 2);
-            var movieData = await tmdb("/discover/movie", {
-                language: "en-US",
-                with_watch_providers: providerId,
-                watch_region: "US",
-                sort_by: "popularity.desc",
-                "vote_count.gte": 10,
-                page: moviePage
-            });
-            if (movieData && movieData.results) {
-                results = movieData.results.map(function(r) { return toItem(r, { mediaType: "movie" }); });
-            }
-        } else {
-            var tvPage = page / 2;
-            var tvData = await tmdb("/discover/tv", {
-                language: "en-US",
-                with_watch_providers: providerId,
-                watch_region: "US",
-                sort_by: "popularity.desc",
-                "vote_count.gte": 10,
-                page: tvPage
-            });
-            if (tvData && tvData.results) {
-                results = tvData.results.map(function(r) { return toItem(r, { mediaType: "tv" }); });
-            }
-        }
-        return results;
+        var items = [];
+        // US new releases (theaters/streaming)
+        try {
+            var us = await tmdb("/movie/now_playing", { language: "en-US", region: "US", page: page });
+            if (us && us.results) items = items.concat(us.results);
+        } catch (e) {}
+        // Indian new releases (Bollywood/Tollywood/Kollywood)
+        try {
+            var ind = await tmdb("/movie/now_playing", { language: "hi-IN", region: "IN", page: page });
+            if (ind && ind.results) items = items.concat(ind.results);
+        } catch (e) {}
+        // Deduplicate by id
+        var seen = {};
+        items = items.filter(function(i) { if (seen[i.id]) return false; seen[i.id] = true; return true; });
+        return items.slice(0, 40).map(function(r) { return toItem(r, { mediaType: "movie" }); });
+    }
+
+    // ── Fetch popular this month (trending this week, mixed movie+series) ──
+    async function fetchPopularThisMonth(page) {
+        page = page || 1;
+        var items = [];
+        try {
+            var movies = await tmdb("/trending/movie/week", { language: "en-US", page: page });
+            if (movies && movies.results) items = items.concat(movies.results.map(function(r) { return toItem(r, { mediaType: "movie" }); }));
+        } catch (e) {}
+        try {
+            var series = await tmdb("/trending/tv/week", { language: "en-US", page: page });
+            if (series && series.results) items = items.concat(series.results.map(function(r) { return toItem(r, { mediaType: "tv" }); }));
+        } catch (e) {}
+        return items;
     }
 
     // ============================================================
-    //  getHome — paginated, page=1 returns first 20 items per category
+    //  getHome — paginated, each category returns 20 items per page
     // ============================================================
     async function getHome(cb, page) {
         var HOME_DEADLINE = 35000;
@@ -385,7 +375,6 @@
             var lang = "en-US";
             var deadlineTimer = null;
 
-            // Helper: fetch a page and store in R if results > 0
             function addCategory(name, endpoint, params, mediaType, pg) {
                 return fetchPage(endpoint, params, mediaType, pg).then(function(items) {
                     if (items.length > 0) R[name] = items;
@@ -394,29 +383,15 @@
 
             var allPromises = [
                 addCategory("Trending Now", "/trending/all/day", { language: lang }, null, pageNum),
-                addCategory("New Releases", "/movie/now_playing", { language: lang, region: "US" }, "movie", pageNum),
+                fetchNewReleases(pageNum).then(function(x) { if (x.length) R["New Releases"] = x; }),
                 addCategory("Currently Airing", "/tv/on_the_air", { language: lang }, "tv", pageNum),
-                addCategory("Trending Movies", "/trending/movie/day", { language: lang }, "movie", pageNum),
-                addCategory("Trending Series", "/trending/tv/day", { language: lang }, "tv", pageNum),
-                addCategory("Popular Movies This Week", "/trending/movie/week", { language: lang }, "movie", pageNum),
-                addCategory("Popular Series This Week", "/trending/tv/week", { language: lang }, "tv", pageNum),
+                fetchPopularThisMonth(pageNum).then(function(x) { if (x.length) R["Popular This Month"] = x; }),
                 addCategory("Popular Movies", "/movie/popular", { language: lang }, "movie", pageNum),
                 addCategory("Popular Series", "/tv/popular", { language: lang }, "tv", pageNum),
                 addCategory("Top Rated Movies", "/movie/top_rated", { language: lang }, "movie", pageNum),
                 addCategory("Top Rated Series", "/tv/top_rated", { language: lang }, "tv", pageNum),
-
-                // Anime & animation
                 fetchFiltered("/trending/tv/day", { language: lang, page: pageNum }, isAnime, "tv", 20).then(function(x) { if (x.length) R["Trending Anime"] = x; }),
-                fetchFiltered("/trending/tv/day", { language: lang, page: pageNum }, isWesternAnim, "tv", 20).then(function(x) { if (x.length) R["Trending Animation"] = x; }),
-                discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc" }, 20).then(function(x) { if (x.length) R["Popular Anime"] = x; }),
-                discoverTv({ with_genres: "16", with_original_language: "en", sort_by: "popularity.desc" }, 20).then(function(x) { if (x.length) R["Popular Animation"] = x; }),
-
-                // OTT platforms (paginated)
-                fetchOttPage(OTT_PROVIDERS["Netflix"], pageNum).then(function(x) { if (x.length) R["On Netflix"] = x; }),
-                fetchOttPage(OTT_PROVIDERS["Prime Video"], pageNum).then(function(x) { if (x.length) R["On Prime Video"] = x; }),
-                fetchOttPage(OTT_PROVIDERS["Disney+"], pageNum).then(function(x) { if (x.length) R["On Disney+"] = x; }),
-                fetchOttPage(OTT_PROVIDERS["HBO Max"], pageNum).then(function(x) { if (x.length) R["On HBO Max"] = x; }),
-                fetchOttPage(OTT_PROVIDERS["Apple TV+"], pageNum).then(function(x) { if (x.length) R["On Apple TV+"] = x; })
+                fetchFiltered("/trending/tv/day", { language: lang, page: pageNum }, isWesternAnim, "tv", 20).then(function(x) { if (x.length) R["Trending Animation"] = x; })
             ];
 
             var deadlineP = new Promise(function(resolve) { deadlineTimer = setTimeout(resolve, HOME_DEADLINE); });
