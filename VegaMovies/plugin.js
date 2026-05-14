@@ -122,25 +122,10 @@
         return null;
     }
 
-    function findFirstLinkContaining(html, keywords) {
-        if (!html) return null;
-        var re = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-        var m;
-        while ((m = re.exec(html)) !== null) {
-            var text = stripHtml(m[2]).toLowerCase();
-            var href = m[1].toLowerCase();
-            for (var ki = 0; ki < keywords.length; ki++) {
-                if (text.indexOf(keywords[ki]) >= 0 || href.indexOf(keywords[ki]) >= 0) return m[1];
-            }
-        }
-        return null;
-    }
-
-    function extractVcLinks(html) {
+    function findAllVcLinks(html) {
         if (!html) return [];
         var seen = {};
         var links = [];
-        // Find ALL vcloud/hubcloud links regardless of parent element
         var re = /<a[^>]*href="([^"]+(?:vcloud|hubcloud)[^"]*)"[^>]*>/gi;
         var m;
         while ((m = re.exec(html)) !== null) {
@@ -178,8 +163,7 @@
     }
 
     // ========================================================================
-    // V-CLOUD EXTRACTOR
-    // Reference: Extractors.kt - VCloud class
+    // V-CLOUD EXTRACTOR - matching Kotlin Extractors.kt - VCloud class
     // ========================================================================
 
     async function extractVcStream(url, cb) {
@@ -193,33 +177,37 @@
             var html = await fetchUrl(newUrl);
             if (!html) return 0;
 
-            // Extract token URL from script: var url = '...'
+            // Get token URL - matching Kotlin VCloud.getUrl()
             var tokenUrl = '';
-            var scripts = html.match(/<script[^>]*>([\s\S]*?)<\/script>/gi);
-            if (scripts) {
-                for (var si = 0; si < scripts.length; si++) {
-                    var uM = scripts[si].match(/var\s+url\s*=\s*['"]([^'"]+)['"]/);
-                    if (uM) { tokenUrl = uM[1]; break; }
-                    // Also try: src = '...'
-                    var uM2 = scripts[si].match(/src\s*=\s*['"]([^'"]+)['"]/);
-                    if (uM2 && uM2[1].indexOf('token') >= 0) { tokenUrl = uM2[1]; break; }
-                }
-            }
-            // Fallback: /video/ format
-            if (!tokenUrl && newUrl.indexOf('/video/') >= 0) {
+            if (newUrl.indexOf('/video/') >= 0) {
+                // Kotlin: doc.selectFirst("div.vd > center > a")
                 var vdM = html.match(/<div[^>]*class="[^"]*\bvd\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
                 if (vdM) {
                     var cM = vdM[1].match(/<center[^>]*>([\s\S]*?)<\/center>/i);
-                    if (cM) { var aM2 = cM[1].match(/<a[^>]*href="([^"]*)"[^>]*>/i); if (aM2) tokenUrl = aM2[1]; }
+                    if (cM) { var aM = cM[1].match(/<a[^>]*href="([^"]*)"[^>]*>/i); if (aM) tokenUrl = aM[1]; }
+                }
+            } else {
+                // Kotlin: doc.selectFirst("script:containsData(url)"), then Regex("var url = '([^']*)'")
+                var scripts = html.match(/<script[^>]*>([\s\S]*?)<\/script>/gi);
+                if (scripts) {
+                    for (var si = 0; si < scripts.length; si++) {
+                        var uM = scripts[si].match(/var\s+url\s*=\s*['"]([^'"]+)['"]/);
+                        if (uM) { tokenUrl = uM[1]; break; }
+                    }
+                }
+                // Also check for src token pattern
+                if (!tokenUrl) {
+                    var srcM = html.match(/src\s*=\s*['"]([^'"]*token[^'"]*)['"]/i);
+                    if (srcM) tokenUrl = srcM[1];
                 }
             }
             if (!tokenUrl) return 0;
-            if (tokenUrl.indexOf('://') < 0) tokenUrl = curBase + tokenUrl;
+            if (tokenUrl.indexOf('://') < 0) tokenUrl = curBase + (tokenUrl.indexOf('/') === 0 ? '' : '/') + tokenUrl;
 
             var docHtml = await fetchUrl(tokenUrl);
             if (!docHtml) return 0;
 
-            // Extract quality / size info
+            // Extract quality/size - Kotlin: document.select("div.card-header").text()
             var cardM = docHtml.match(/<div[^>]*class="[^"]*card-header[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
             var headerText = cardM ? stripHtml(cardM[1]) : 'Unknown';
             var sizeM = docHtml.match(/<i[^>]*id="size"[^>]*>([\s\S]*?)<\/i>/i);
@@ -227,36 +215,72 @@
             var quality = getQualityNum(headerText);
             var labelBase = headerText + (sizeText ? ' [' + sizeText + ']' : '');
 
-            // Scan all <a> tags for download server links.
-            // Use a broad regex that works regardless of attribute order (class before href, etc.)
-            // Kotlin reference: document.select("h2 a.btn")
+            // Kotlin: document.select("h2 a.btn") - find ALL <a class="btn"> inside <h2>
+            // Handle BOTH attribute orders: href before class, or class before href
             var links = [];
-            var aRe = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-            var aM;
-            while ((aM = aRe.exec(docHtml)) !== null) {
-                var href = aM[1].trim();
-                var text = stripHtml(aM[2]).trim();
-                if (!href || href === '#' || href === 'admin') continue;
-                var hLow = href.toLowerCase();
-                var tLow = text.toLowerCase();
-                // Skip known non-download links
-                if (hLow.indexOf('google') >= 0 || hLow.indexOf('telegram') >= 0 || hLow.indexOf('cdnjs') >= 0 || hLow.indexOf('fontawesome') >= 0 || hLow.indexOf('unpkg') >= 0) continue;
-                // Accept any link that has download-related text or looks like a file host
-                if (tLow.indexOf('fsl') >= 0 || tLow.indexOf('pixel') >= 0 || tLow.indexOf('mega') >= 0 ||
-                    tLow.indexOf('download') >= 0 || tLow.indexOf('server') >= 0 || tLow.indexOf('10g') >= 0 ||
-                    tLow.indexOf('buzz') >= 0 || tLow.indexOf('fast') >= 0 || tLow.indexOf('direct') >= 0 ||
-                    hLow.indexOf('diskcdn') >= 0 || hLow.indexOf('hubcloud') >= 0 || hLow.indexOf('gofile') >= 0 ||
-                    hLow.indexOf('workers.dev') >= 0 || hLow.indexOf('pixeldra') >= 0) {
-                    links.push({ href: href, text: text });
+            // Try href then class order
+            var btnRe1 = /<h2[^>]*>([\s\S]*?)<\/h2>/gi;
+            var h2M;
+            while ((h2M = btnRe1.exec(docHtml)) !== null) {
+                var h2Content = h2M[1];
+                var found = false;
+                // Pattern: href="..." class="...btn..."
+                var aRe1 = /<a[^>]*href="([^"]+)"[^>]*class="([^"]*)btn([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+                var aM1;
+                while ((aM1 = aRe1.exec(h2Content)) !== null) {
+                    links.push({ href: aM1[1].trim(), text: stripHtml(aM1[4]).trim() });
+                    found = true;
+                }
+                // Pattern: class="...btn..." href="..."
+                var aRe2 = /<a[^>]*class="([^"]*)btn([^"]*)"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+                var aM2;
+                while ((aM2 = aRe2.exec(h2Content)) !== null) {
+                    // Check if this URL was already found (dedup)
+                    var dup = false;
+                    for (var di = 0; di < links.length; di++) {
+                        if (links[di].href === aM2[3].trim()) { dup = true; break; }
+                    }
+                    if (!dup) links.push({ href: aM2[3].trim(), text: stripHtml(aM2[4]).trim() });
+                    found = true;
+                }
+                // If no btn class match, try any <a> in h2
+                if (!found) {
+                    var aRe3 = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+                    var aM3;
+                    while ((aM3 = aRe3.exec(h2Content)) !== null) {
+                        var href3 = aM3[1].trim();
+                        var text3 = stripHtml(aM3[2]).trim();
+                        if (!href3 || href3 === '#' || href3 === '/') continue;
+                        var dup2 = false;
+                        for (var di2 = 0; di2 < links.length; di2++) {
+                            if (links[di2].href === href3) { dup2 = true; break; }
+                        }
+                        if (!dup2) links.push({ href: href3, text: text3 });
+                    }
                 }
             }
 
+            // Kotlin: for each link, check text against server patterns
             var tasks = links.map(async function(link) {
                 var h = link.href, t = link.text;
-                if (t.indexOf('FSL Server') >= 0 || t.indexOf('FSL ') >= 0) { if (cb) cb(h, quality, 'FSL Server', labelBase); return 1; }
-                if (t.indexOf('FSLv2') >= 0) { if (cb) cb(h, quality, 'FSLv2 Server', labelBase); return 1; }
-                if (t.indexOf('Mega Server') >= 0) { if (cb) cb(h, quality, 'Mega Server', labelBase); return 1; }
-                if (t.indexOf('Download File') >= 0) { if (cb) cb(h, quality, '', labelBase); return 1; }
+
+                // Kotlin: if (text.contains("FSL Server"))
+                if (t.indexOf('FSL Server') >= 0 || t.indexOf('FSL ') >= 0) {
+                    if (cb) cb(h, quality, 'FSL Server', labelBase); return 1;
+                }
+                // Kotlin: else if (text.contains("FSLv2"))
+                if (t.indexOf('FSLv2') >= 0) {
+                    if (cb) cb(h, quality, 'FSLv2 Server', labelBase); return 1;
+                }
+                // Kotlin: else if (text.contains("Mega Server"))
+                if (t.indexOf('Mega Server') >= 0 || t.indexOf('Mega') >= 0) {
+                    if (cb) cb(h, quality, 'Mega Server', labelBase); return 1;
+                }
+                // Kotlin: else if (text.contains("Download File"))
+                if (t.indexOf('Download File') >= 0) {
+                    if (cb) cb(h, quality, '', labelBase); return 1;
+                }
+                // Kotlin: else if (text.contains("BuzzServer"))
                 if (t.indexOf('BuzzServer') >= 0 || t.indexOf('Buzz Server') >= 0) {
                     try {
                         var bUrl = h.charAt(h.length-1) === '/' ? h : h + '/download';
@@ -267,7 +291,8 @@
                     } catch(e) { /* skip */ }
                     return 0;
                 }
-                if (h.indexOf('pixeldra') >= 0 || t.indexOf('PixelServer') >= 0 || t.indexOf('Pixeldrain') >= 0) {
+                // Kotlin: else if (link.contains("pixeldra"))
+                if (h.indexOf('pixeldra') >= 0 || t.indexOf('Pixeldrain') >= 0 || t.indexOf('PixelServer') >= 0) {
                     var pxlM = docHtml.match(/var\s+pxl\s*=\s*["']([^"']+)["']/);
                     var pxl = pxlM ? pxlM[1] : null;
                     if (pxl) {
@@ -279,18 +304,19 @@
                     }
                     return 0;
                 }
-                if (t.indexOf('10Gbps') >= 0 || t.indexOf('10 gbps') >= 0 || t.indexOf('10gbps') >= 0 || t.indexOf('10Gbps Server') >= 0 || h.indexOf('hubcloud.cx') >= 0) {
+                // Kotlin: else if (text.contains("Server : 10Gbps"))
+                if (t.indexOf('10Gbps') >= 0 || t.indexOf('10 gbps') >= 0 || t.indexOf('10gbps') >= 0 || h.indexOf('hubcloud.cx') >= 0) {
                     var fLink = h;
                     var linkParts = h.split('link=');
                     if (linkParts.length > 1) { var afterLink = linkParts[1]; var ampIdx = afterLink.indexOf('&'); fLink = ampIdx >= 0 ? afterLink.substring(0, ampIdx) : afterLink; fLink = decodeURIComponent(fLink); }
                     if (cb) cb(fLink, quality, 'Download', labelBase); return 1;
                 }
-                // Generic catch
-                if (t.toLowerCase().indexOf('download') >= 0 || h.indexOf('hubcloud') >= 0 || h.indexOf('pixeldra') >= 0 || h.indexOf('diskcdn') >= 0 || h.indexOf('gofile') >= 0 || h.indexOf('workers.dev') >= 0) {
-                    if (cb) cb(h, quality, 'Server', labelBase); return 1;
+                // Extra catch: any link with Download in text
+                if (t.toLowerCase().indexOf('download') >= 0) {
+                    if (cb) cb(h, quality, 'Download', labelBase); return 1;
                 }
-                // Last resort: any link that looks like a file host
-                if (h.indexOf('http') >= 0 && t.length > 0 && t.toLowerCase().indexOf('server') >= 0) {
+                // Extra catch: any remaining link that looks like a server
+                if (h.indexOf('http') >= 0 && t.length > 0) {
                     if (cb) cb(h, quality, 'Server', labelBase); return 1;
                 }
                 return 0;
@@ -305,7 +331,6 @@
         var streams = [];
         var lower = vcUrl.toLowerCase();
 
-        // Try V-Cloud / HubCloud extraction
         if (lower.indexOf('vcloud') >= 0 || lower.indexOf('hubcloud') >= 0 || lower.indexOf('nexdrive') >= 0) {
             await extractVcStream(vcUrl, function(su, q, sn, lb) {
                 var qLabel = q ? q + 'p' : '';
@@ -319,20 +344,15 @@
             });
         }
 
-        // FastDL fallback: always try if V-Cloud returned nothing OR URL is fastdl
+        // FastDL fallback
         if ((streams.length === 0 || lower.indexOf('fastdl') >= 0) && (lower.indexOf('fastdl') >= 0 || lower.indexOf('vcloud') >= 0 || lower.indexOf('hubcloud') >= 0 || lower.indexOf('nexdrive') >= 0)) {
             try {
                 var fHtml = await fetchUrl(vcUrl);
                 if (fHtml) {
                     var rM = fHtml.match(/var\s+reurl\s*=\s*"([^"]+)"/);
-                    if (rM) streams.push({ url: rM[1], source: 'FastDL', headers: { 'Referer': getBaseUrl(vcUrl) } });
-                    var dlM = fHtml.match(/https?:\/\/[^"']*dl\.php[^"']*/);
-                    if (dlM && streams.length === 0) { var dR = await fetchUrl(dlM[0]); if (dR && dR.length > 100) streams.push({ url: dlM[0], source: 'FastDL', headers: { 'Referer': getBaseUrl(vcUrl) } }); }
-                    // Also try any direct video URL in the page
-                    if (streams.length === 0) {
-                        var vidM = fHtml.match(/https?:\/\/[^"'\s]+\.(?:mp4|mkv|avi|webm)[^"'\s]*/i);
-                        if (vidM) streams.push({ url: vidM[0], source: 'Direct', headers: { 'Referer': getBaseUrl(vcUrl) } });
-                    }
+                    if (rM) streams.push({ url: rM[1], name: 'FastDL', source: 'FastDL', quality: 0, headers: { 'Referer': getBaseUrl(vcUrl) } });
+                    var vidM = fHtml.match(/https?:\/\/[^"'\s]+\.(?:mp4|mkv|avi|webm)[^"'\s]*/i);
+                    if (vidM && streams.length === 0) streams.push({ url: vidM[0], name: 'Direct', source: 'Direct', quality: 0, headers: { 'Referer': getBaseUrl(vcUrl) } });
                 }
             } catch(e) { /* skip */ }
         }
@@ -408,8 +428,7 @@
     }
 
     // ========================================================================
-    // load - Media Details
-    // Reference: VegaMoviesProvider.kt - load()
+    // load - Media Details - matching VegaMoviesProvider.kt - load()
     // ========================================================================
 
     async function load(url, cb) {
@@ -421,11 +440,11 @@
                 return;
             }
 
-            // Title
+            // Title - Kotlin: document.select("title").text()
             var title = extractTagText(html, 'title');
             title = title.replace(/Download\s*/gi, '').trim() || 'Unknown';
 
-            // Poster
+            // Poster - Kotlin: document.select("p > img").attr("src")
             var poster = '';
             var pRe = /<p[^>]*>([\s\S]*?)<\/p>/gi;
             var pM;
@@ -434,19 +453,28 @@
                 if (imgM && imgM[1]) { poster = imgM[1]; break; }
             }
 
-            // IMDb
+            // IMDb - Kotlin: document.select("a[href*=\"imdb\"]").attr("href")
             var imdbM = html.match(/<a[^>]*href="[^"]*imdb\.com\/title\/(tt\d+)[^"]*"[^>]*>/i);
             var imdbId = imdbM ? imdbM[1] : '';
 
-            // Type detection
+            // Type detection - Kotlin: matches "Series-SYNOPSIS/PLOT", "Series Info", "Series synopsis/PLOT"
             var isSeries = false;
+            var typeChecks = [
+                'series-synopsis', 'series info', 'series synopsis', 'series',
+                'drama', 'korean', 'anime', 'season', 'episode'
+            ];
             var h3Tags = findElements(html, 'h3');
             for (var hi = 0; hi < h3Tags.length; hi++) {
                 var ht = h3Tags[hi].text.toLowerCase();
-                if (ht.indexOf('series-synopsis') >= 0 || ht.indexOf('series info') >= 0 || ht.indexOf('series synopsis') >= 0) { isSeries = true; break; }
+                for (var tci = 0; tci < typeChecks.length; tci++) {
+                    if (ht.indexOf(typeChecks[tci]) >= 0 && ht.indexOf('movie') < 0 && ht.indexOf('film') < 0) {
+                        isSeries = true; break;
+                    }
+                }
+                if (isSeries) break;
             }
 
-            // Description
+            // Description - Kotlin: nextElementSibling after h3 with SYNOPSIS/PLOT
             var description = '';
             for (var hi = 0; hi < h3Tags.length; hi++) {
                 var spanM = h3Tags[hi].html.match(/<span[^>]*>([\s\S]*?)<\/span>/i);
@@ -457,7 +485,7 @@
                 }
             }
 
-            // Cinemeta enrichment
+            // Cinemeta enrichment - Kotlin: fetch cinemeta
             var genres = [], imdbRating = '', year = '';
             if (imdbId) {
                 try {
@@ -474,13 +502,10 @@
             }
 
             // === EPISODES ===
-            // PLAIN OBJECTS (not new Episode()) to avoid Dart serialization issues.
-            // URL is always a plain HTTP URL matching Kotlin loadLinks() architecture:
-            //   - Movies: single episode with page URL, loadStreams handles all quality extraction
-            //   - Series: episodes with nexdrive URL (intermediate page with V-Cloud links)
             var episodes = [];
 
             if (isSeries) {
+                // Find quality tags - Kotlin: "main > h3,h5:matches((?i)(4K|[0-9]*0p))"
                 var hTags = h3Tags.concat(findElements(html, 'h5')).filter(function(el) {
                     return /4k|\d{3,4}p/i.test(el.text) && el.text.toLowerCase().indexOf('zip') < 0;
                 });
@@ -489,20 +514,44 @@
                 for (var ti = 0; ti < hTags.length; ti++) {
                     var tag = hTags[ti];
                     var sM = tag.text.match(/(?:Season\s+|S)(\d+)/i);
-                    var realSeason = sM ? parseInt(sM[1]) : 0;
+                    var realSeason = sM ? parseInt(sM[1]) : 1;
                     var tPos = html.indexOf(tag.html);
                     var ns = null;
                     if (tPos >= 0) ns = nextSiblingAt(html, tPos + tag.html.length);
 
                     var searchHtml = (ns && ns.html) || tag.html;
 
-                    var found = findFirstLinkContaining(searchHtml, ['v-cloud', 'episode', 'download', 'g-direct']);
-                    if (!found) found = findFirstLinkContaining(searchHtml, ['nexdrive']);
+                    // Find intermediate page link - Kotlin: looks for V-Cloud, Episode, Download, G-Direct
+                    var linkRe = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+                    var linkM;
+                    var found = null;
+                    var allLinks = [];
+                    while ((linkM = linkRe.exec(searchHtml)) !== null) {
+                        allLinks.push({ href: linkM[1], text: stripHtml(linkM[2]).toLowerCase() });
+                    }
+                    // First pass: V-Cloud preferred (its page has vcloud.zip URLs)
+                    for (var li = 0; li < allLinks.length; li++) {
+                        if (allLinks[li].text.indexOf('v-cloud') >= 0) { found = allLinks[li].href; break; }
+                    }
+                    // Second pass: Episode or Download (Kotlin match)
+                    if (!found) {
+                        for (var li = 0; li < allLinks.length; li++) {
+                            if (allLinks[li].text.indexOf('episode') >= 0 || allLinks[li].text.indexOf('download') >= 0) { found = allLinks[li].href; break; }
+                        }
+                    }
+                    // Third pass: G-Direct fallback
+                    if (!found) {
+                        for (var li = 0; li < allLinks.length; li++) {
+                            if (allLinks[li].text.indexOf('g-direct') >= 0) { found = allLinks[li].href; break; }
+                        }
+                    }
+                    // Last resort: first link
+                    if (!found && allLinks.length > 0) found = allLinks[0].href;
 
                     if (found) {
                         var interHtml = await fetchUrl(fixUrl(found));
                         if (interHtml) {
-                            var vcLinks = extractVcLinks(interHtml);
+                            var vcLinks = findAllVcLinks(interHtml);
                             for (var vci = 0; vci < vcLinks.length; vci++) {
                                 var mKey = realSeason + '_' + (vci + 1);
                                 if (epMap[mKey]) {
@@ -521,12 +570,16 @@
                     var sn = parseInt(parts[0]) || 1;
                     var en = parseInt(parts[1]) || (ki + 1);
                     var srcs = epMap[keys[ki]];
-                    // Encode all quality source URLs as a special URL format.
-                    // Platform accepts HTTP URLs; loadStreams decodes the multi-source info.
-                    var multiUrl = 'https://vm.sources/' + encodeURIComponent(JSON.stringify(srcs));
+                    // Encode all quality sources in the URL query parameter.
+                    // V-Cloud servers ignore unknown query params; the app passes URL as-is to loadStreams.
+                    var epUrl = srcs[0] || '';
+                    if (srcs.length > 1) {
+                        var extra = srcs.slice(1);
+                        epUrl += (epUrl.indexOf('?') >= 0 ? '&' : '?') + 'vm=' + encodeURIComponent(JSON.stringify(extra));
+                    }
                     episodes.push({
                         name: 'S' + sn + ' E' + en,
-                        url: multiUrl,
+                        url: epUrl,
                         season: sn,
                         episode: en,
                         posterUrl: poster || '',
@@ -536,9 +589,6 @@
                 episodes.sort(function(a, b) { if (a.season !== b.season) return a.season - b.season; return a.episode - b.episode; });
 
             } else {
-                // Movie: single episode with page URL
-                // loadStreams fetches the page, finds all quality nexdrive buttons,
-                // extracts V-Cloud URLs, and returns all streams across all qualities
                 episodes.push({
                     name: 'Play',
                     url: pageUrl || '',
@@ -549,7 +599,6 @@
                 });
             }
 
-            // Response: new MultimediaItem wrapper, PLAIN OBJECT episodes
             var scoreVal = imdbRating ? parseFloat(imdbRating) / 10 : undefined;
             var yearVal = year ? (parseInt(year) || undefined) : undefined;
             cb({ success: true, data: new MultimediaItem({
@@ -569,43 +618,45 @@
     }
 
     // ========================================================================
-    // loadStreams
-    // Reference: VegaMoviesProvider.kt - loadLinks()
+    // loadStreams - matching VegaMoviesProvider.kt - loadLinks()
     // ========================================================================
 
     async function loadStreams(url, cb) {
         try {
-            // Multi-source URL: https://vm.sources/<encoded JSON array of vcloud URLs>
-            if (typeof url === 'string' && url.indexOf('https://vm.sources/') === 0) {
-                try {
-                    var encoded = url.replace('https://vm.sources/', '');
-                    var srcs = JSON.parse(decodeURIComponent(encoded));
-                    if (Array.isArray(srcs) && srcs.length > 0) {
-                        var allStreams = [];
-                        for (var si = 0; si < srcs.length; si++) {
-                            try {
-                                var st = await withTimeout(function() { return extractSingleVc(srcs[si], url); }, 60000);
-                                for (var sj = 0; sj < st.length; sj++) {
-                                    var isDup = false;
-                                    for (var sk = 0; sk < allStreams.length; sk++) {
-                                        if (allStreams[sk].url === st[sj].url) { isDup = true; break; }
-                                    }
-                                    if (!isDup) allStreams.push(st[sj]);
-                                }
-                            } catch(e) {}
-                        }
-                        // Sort by quality descending so best quality appears first
-                        allStreams.sort(function(a, b) { return (b.quality || 0) - (a.quality || 0); });
-                        cb({ success: true, data: allStreams });
-                        return;
-                    }
-                } catch(e) { /* fall through to normal handling */ }
-            }
-
             var lower = url.toLowerCase();
 
             // Direct V-Cloud/HubCloud URL (series episodes)
             if (lower.indexOf('vcloud') >= 0 || lower.indexOf('hubcloud') >= 0) {
+                // Check for extra quality sources encoded in query parameter
+                var vmMatch = url.match(/[?&]vm=([^&]+)/);
+                if (vmMatch) {
+                    try {
+                        var extraSrcs = JSON.parse(decodeURIComponent(vmMatch[1]));
+                        var primaryUrl = url.replace(/[?&]vm=[^&]+/, '');
+                        var allSt = [];
+                        // Process primary URL
+                        var priSt = await withTimeout(function() { return extractSingleVc(primaryUrl, url); }, 60000);
+                        for (var psi = 0; psi < priSt.length; psi++) allSt.push(priSt[psi]);
+                        // Process extra sources
+                        for (var ei = 0; ei < extraSrcs.length; ei++) {
+                            try {
+                                var extSt = await withTimeout(function() { return extractSingleVc(extraSrcs[ei], url); }, 60000);
+                                for (var esi = 0; esi < extSt.length; esi++) {
+                                    var isDup = false;
+                                    for (var di = 0; di < allSt.length; di++) {
+                                        if (allSt[di].url === extSt[esi].url) { isDup = true; break; }
+                                    }
+                                    if (!isDup) allSt.push(extSt[esi]);
+                                }
+                            } catch(e) {}
+                        }
+                        // Sort by quality descending
+                        allSt.sort(function(a, b) { return (b.quality || 0) - (a.quality || 0); });
+                        cb({ success: true, data: allSt });
+                        return;
+                    } catch(e) { /* fall through */ }
+                }
+                // Single V-Cloud URL
                 var st = await withTimeout(function() { return extractSingleVc(url, url); }, 60000);
                 cb({ success: true, data: st });
                 return;
@@ -615,33 +666,34 @@
             if (lower.indexOf('nexdrive') >= 0) {
                 var nHtml = await withTimeout(function() { return fetchUrl(url); }, 30000);
                 if (nHtml) {
-                    // Try to find V-Cloud link first
                     var vcL = findBestVcLink(nHtml);
                     if (vcL) {
                         var st2 = await withTimeout(function() { return extractSingleVc(fixUrl(vcL), url); }, 60000);
                         cb({ success: true, data: st2 });
                         return;
                     }
-                    // Fallback: try FastDL link on the nexdrive page directly
-                    var fastM = nHtml.match(/<a[^>]*href="([^"]*fastdl[^"]*)"[^>]*>/i);
-                    if (fastM) {
-                        var st3 = await withTimeout(function() { return extractSingleVc(fixUrl(fastM[1]), url); }, 60000);
-                        cb({ success: true, data: st3 });
-                        return;
+                    // Fallback: any link on nexdrive page
+                    var nxLinks = findAllLinks(nHtml);
+                    for (var nli = 0; nli < nxLinks.length; nli++) {
+                        var nl = nxLinks[nli].toLowerCase();
+                        if (nl.indexOf('vcloud') >= 0 || nl.indexOf('hubcloud') >= 0 || nl.indexOf('fastdl') >= 0) {
+                            var fSt = await withTimeout(function() { return extractSingleVc(fixUrl(nxLinks[nli]), url); }, 60000);
+                            if (fSt.length > 0) { cb({ success: true, data: fSt }); return; }
+                        }
                     }
                 }
                 cb({ success: true, data: [] });
                 return;
             }
 
-            // Movie page URL: find all quality buttons
+            // Movie/series page URL: find all quality buttons
             var html = await withTimeout(function() { return fetchUrl(url); }, 30000);
             if (!html || html.indexOf('Cloudflare') >= 0) { cb({ success: true, data: [] }); return; }
 
             var btns = [];
             var bs = getBaseUrl(url);
 
-            // Pattern 1: a:has(button.dwd-button) — matching Kotlin
+            // Pattern 1: a:has(button.dwd-button)
             var dwdRe = /<a[^>]*href="([^"]+)"[^>]*>(?:(?!<\/a>)[\s\S])*?<button[^>]*class="[^"]*dwd-button[^"]*"[^>]*>/gi;
             var bm;
             while ((bm = dwdRe.exec(html)) !== null) {
@@ -649,7 +701,7 @@
                 if (bUrl && bUrl !== '#' && bUrl !== '/' && bUrl !== url && bUrl !== bs + '/' && bUrl !== bs) btns.push(bUrl);
             }
 
-            // Pattern 2: a > button with any download class
+            // Pattern 2: any button-like class
             if (btns.length === 0) {
                 var btnRe2 = /<a[^>]*href="([^"]+)"[^>]*>(?:(?!<\/a>)[\s\S])*?<button[^>]*class="[^"]*(?:dwd|btn|download|dl)[^"]*"[^>]*>/gi;
                 while ((bm = btnRe2.exec(html)) !== null) {
@@ -658,14 +710,14 @@
                 }
             }
 
-            // Pattern 3: nexdrive links near h3/h5 quality tags
+            // Pattern 3: nexdrive links near quality tags
             if (btns.length === 0) {
                 var altRe = /<h[3456][^>]*>([\s\S]*?)<\/h[3456]>[\s\S]*?<a[^>]*href="([^"]*nexdrive[^"]*)"[^>]*>/gi;
                 var altM;
-                while ((altM = altRe.exec(html)) !== null) { btns.push(fixUrl(altM[2])); }
+                while ((altM = altRe.exec(html)) !== null) btns.push(fixUrl(altM[2]));
             }
 
-            // Pattern 4: any nexdrive link on the page
+            // Pattern 4: any nexdrive link
             if (btns.length === 0) {
                 var allLinks = findAllLinks(html);
                 for (var li = 0; li < allLinks.length; li++) {
@@ -675,7 +727,6 @@
 
             if (btns.length === 0) { cb({ success: true, data: [] }); return; }
 
-            // Process each quality SEQUENTIALLY
             var allStreams = [];
             for (var bi = 0; bi < btns.length; bi++) {
                 try {
@@ -686,18 +737,13 @@
                         var qSt = await withTimeout(function() { return extractSingleVc(fixUrl(best), btns[bi]); }, 60000);
                         for (var si = 0; si < qSt.length; si++) allStreams.push(qSt[si]);
                     } else {
-                        // No V-Cloud link found: try any link on the nexdrive page
                         var nxLinks = findAllLinks(dlH);
-                        var nxFound = null;
                         for (var nli = 0; nli < nxLinks.length; nli++) {
                             var nl = nxLinks[nli].toLowerCase();
                             if (nl.indexOf('vcloud') >= 0 || nl.indexOf('hubcloud') >= 0 || nl.indexOf('fastdl') >= 0 || nl.indexOf('nexdrive') >= 0) {
-                                nxFound = nxLinks[nli]; break;
+                                var fSt = await withTimeout(function() { return extractSingleVc(fixUrl(nxLinks[nli]), btns[bi]); }, 60000);
+                                for (var si = 0; si < fSt.length; si++) allStreams.push(fSt[si]);
                             }
-                        }
-                        if (nxFound) {
-                            var fSt = await withTimeout(function() { return extractSingleVc(fixUrl(nxFound), btns[bi]); }, 60000);
-                            for (var si = 0; si < fSt.length; si++) allStreams.push(fSt[si]);
                         }
                     }
                 } catch (e) { /* skip failed quality */ }
