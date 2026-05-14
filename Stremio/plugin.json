@@ -9,7 +9,6 @@
   "categories": ["Movie", "TvSeries", "Anime"],
   "isAdult": false,
   "addons": [
-    "stremio://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,nekobt/manifest.json",
     "https://watcho3.rafaelzioneverest.workers.dev/manifest.json",
     "https://stremio.eletroclay.com/manifest.json",
     "https://flixnest.app/flix-finder/eyJxdWFsaXR5IjpbIjEwODBwIiwiNzIwcCJdfQ/manifest.json",
