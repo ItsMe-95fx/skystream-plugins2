@@ -318,13 +318,17 @@
     // ── Fetch a single page from TMDB and convert to items ──
     async function fetchPage(endpoint, params, mediaType, page) {
         try {
-            params = Object.assign({}, params || {}, { page: page || 1 });
-            var data = await tmdb(endpoint, params);
-            if (data && data.results) {
-                return data.results.map(function(r) {
-                    return toItem(r, { mediaType: mediaType || r.media_type || "movie" });
-                });
+            page = page || 1;
+            var all = [];
+            // Fetch 2 pages for more posters
+            for (var p = page; p <= page + 1; p++) {
+                var data = await tmdb(endpoint, Object.assign({}, params || {}, { page: p }));
+                if (data && data.results) all = all.concat(data.results);
+                if (all.length >= 40) break;
             }
+            return all.slice(0, 40).map(function(r) {
+                return toItem(r, { mediaType: mediaType || r.media_type || "movie" });
+            });
         } catch (e) {}
         return [];
     }
@@ -368,7 +372,7 @@
     //  getHome — paginated, each category returns 20 items per page
     // ============================================================
     async function getHome(cb, page) {
-        var HOME_DEADLINE = 35000;
+        var HOME_DEADLINE = 45000;
         var pageNum = parseInt(page) || 1;
         try {
             var cats = [
