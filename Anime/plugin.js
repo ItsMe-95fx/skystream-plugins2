@@ -299,29 +299,51 @@
     //   {"i":"tt","t":"m","s":1,"e":1}  → { id: "tt", type: "m", season: 1, episode: 1 }
     function parseVideoId(raw) {
         if (!raw) return null;
-        // Try JSON format first (our internal format)
+        // Try JSON format first
         var p = safeJson(raw, null);
         if (p && p.i !== undefined) return { id: str(p.i), type: p.t || "movie", season: p.s || 0, episode: p.e || 0 };
         if (p && p.tmdbId !== undefined) return { id: str(p.tmdbId), type: p.mediaType || "movie", season: p.seasonNumber || 0, episode: p.episodeNumber || 0 };
 
-        // Standard Stremio colon-separated format: "metaId:season:episode"
+        // Detect known prefixes
+        var prefixType = null;
+        if (/^kitsu:/i.test(raw)) prefixType = "anime";
+        else if (/^anilist:/i.test(raw)) prefixType = "anime";
+        else if (/^mal:/i.test(raw)) prefixType = "anime";
+        else if (/^nexio_raw:/i.test(raw)) prefixType = "anime";
+        else if (/^tmdb:/i.test(raw)) prefixType = "movie";
+
+        // Split by colon to extract prefix, ID, season, episode
+        // Formats: "prefix:id", "prefix:id:season:episode", "ttid:season:episode"
         if (raw.indexOf(":") !== -1) {
-            // Check if it looks like "prefix:season:episode" - the first colon part is the ID
             var parts = raw.split(":");
             var first = parts[0];
-            // If starts with "tt" it's an IMDb ID with season/episode
-            if (/^tt\d+$/.test(first) && parts.length >= 3) {
-                var sn = parseInt(parts[1], 10);
-                var en = parseInt(parts[2], 10);
-                return { id: first, type: "series", season: isNaN(sn) ? 0 : sn, episode: isNaN(en) ? 0 : en };
+
+            if (/^tt\d+$/.test(first)) {
+                // IMDb format: "tt1234567" or "tt1234567:season:episode"
+                if (parts.length >= 3) {
+                    return { id: first, type: "series", season: parseInt(parts[1]) || 0, episode: parseInt(parts[2]) || 0 };
+                }
+                return { id: first, type: "movie", season: 0, episode: 0 };
             }
-            // If starts with a recognized prefix pattern (like "tmdb:", "yt_id:")
-            if (first.indexOf("_") !== -1 || first.indexOf("-") !== -1) {
-                return { id: raw, type: "series", season: 0, episode: 0 };
+
+            if (prefixType) {
+                // Prefix format: "prefix:id" or "prefix:id:season:episode"
+                if (parts.length >= 3) {
+                    // parts = ["prefix", "id", "season", "episode", ...]
+                    return { id: parts[0] + ":" + parts[1], type: prefixType, season: parseInt(parts[2]) || 0, episode: parseInt(parts[3]) || 0 };
+                }
+                return { id: raw, type: prefixType, season: 0, episode: 0 };
             }
+
+            // Other prefixed format like "custom:id" or "custom:id:season:episode"
+            if (parts.length >= 3) {
+                return { id: parts[0] + ":" + parts[1], type: "series", season: parseInt(parts[2]) || 0, episode: parseInt(parts[3]) || 0 };
+            }
+            return { id: raw, type: "series", season: 0, episode: 0 };
         }
 
-        // Raw ID (movie or unknown)
+        // Raw ID (no colon)
+        if (prefixType) return { id: raw, type: prefixType, season: 0, episode: 0 };
         return { id: raw, type: "movie", season: 0, episode: 0 };
     }
 
@@ -852,10 +874,11 @@
                 mediaType = "movie";
             }
 
+            // typeStr is used by fetchSubtitles and other downstream code
             var typeStr = (mediaType === "tv" || mediaType === "series" || mediaType === "anime") ? "series" : "movie";
             var allStreams = [];
 
-            // ── 1) Fetch streams from ALL addons (sequential, reliable) ──
+            // ── 1) Fetch streams from ALL addons (sequential) ──
             var sAddons = getStreamingAddons();
             if (sAddons.length) {
                 for (var ai = 0; ai < sAddons.length; ai++) {
@@ -863,22 +886,50 @@
                         var addonUrl = sAddons[ai];
                         var bu = baseUrl(addonUrl);
                         var an = addonName(addonUrl);
-                        var urlsToTry = [];
-                        var eid = encodeURIComponent(metaId);
 
-                        if (typeStr === "series" && season > 0 && episode > 0) {
-                            urlsToTry.push(bu + "/stream/" + typeStr + "/" + encodeURIComponent(metaId + ":" + season + ":" + episode) + ".json");
-                        }
-                        urlsToTry.push(bu + "/stream/" + typeStr + "/" + eid + ".json");
-                        if (isImdbId(metaId)) {
-                            urlsToTry.push(bu + "/stream/" + typeStr + "/" + encodeURIComponent("tmdb:" + metaId) + ".json");
-                        }
+                        // Try types in order: detected type first, then fallbacks
+                        var typesToTry = [mediaType];
+                        if (mediaType === "anime") typesToTry.push("series", "movie");
+                        else if (mediaType === "series" || mediaType === "tv") typesToTry.push("movie");
+                        else typesToTry.push("series");
 
-                        for (var ui = 0; ui < urlsToTry.length; ui++) {
-                            var sd = await fetchTimeout(urlsToTry[ui], null, ADDON_TIMEOUT);
+                        var found = false;
+                        for (var tti = 0; tti < typesToTry.length && !found; tti++) {
+                            // Try raw ID first (preserves colons for prefix IDs like "kitsu:11")
+                            var rawUrl = bu + "/stream/" + typesToTry[tti] + "/" + metaId + ".json";
+                            var sd = await fetchTimeout(rawUrl, null, ADDON_TIMEOUT);
                             if (sd && Array.isArray(sd.streams) && sd.streams.length) {
                                 allStreams = allStreams.concat(processStreams(sd.streams, an, bu));
-                                break; // Found streams for this addon, move to next
+                                found = true; break;
+                            }
+
+                            // Try encoded ID (standard Stremio format)
+                            var encUrl = bu + "/stream/" + typesToTry[tti] + "/" + encodeURIComponent(metaId) + ".json";
+                            var sd2 = await fetchTimeout(encUrl, null, ADDON_TIMEOUT);
+                            if (sd2 && Array.isArray(sd2.streams) && sd2.streams.length) {
+                                allStreams = allStreams.concat(processStreams(sd2.streams, an, bu));
+                                found = true; break;
+                            }
+
+                            // Try season/episode suffix for series
+                            if (season > 0 && episode > 0) {
+                                var epId = metaId + ":" + season + ":" + episode;
+                                var epUrl = bu + "/stream/" + typesToTry[tti] + "/" + epId + ".json";
+                                var sd3 = await fetchTimeout(epUrl, null, ADDON_TIMEOUT);
+                                if (sd3 && Array.isArray(sd3.streams) && sd3.streams.length) {
+                                    allStreams = allStreams.concat(processStreams(sd3.streams, an, bu));
+                                    found = true; break;
+                                }
+                            }
+
+                            // Try tmdb: prefix for IMDb IDs
+                            if (isImdbId(metaId)) {
+                                var tmdbUrl = bu + "/stream/" + typesToTry[tti] + "/" + encodeURIComponent("tmdb:" + metaId) + ".json";
+                                var sd4 = await fetchTimeout(tmdbUrl, null, ADDON_TIMEOUT);
+                                if (sd4 && Array.isArray(sd4.streams) && sd4.streams.length) {
+                                    allStreams = allStreams.concat(processStreams(sd4.streams, an, bu));
+                                    found = true; break;
+                                }
                             }
                         }
                     } catch (e) { /* skip */ }
