@@ -1,0 +1,20 @@
+{
+  "packageName": "dev.sunriseve.stremiohub",
+  "name": "Stremio Hub",
+  "version": 1,
+  "baseUrl": "https://stremio-hub.local",
+  "description": "Pure addon-driven Stremio interface for SkyStream. getHome/search/load fetch from catalogueAddons manifests. loadStreams aggregates streamingAddons with full formatStream/parseStreamFeatures engine. Supports HTTP/HLS/torrent/YouTube.",
+  "authors": ["sunriseve"],
+  "languages": ["en"],
+  "categories": ["Movies", "TV", "Anime"],
+  "catalogueAddons": [
+    "https://animestream-addon.keypop3750.workers.dev/sm=https|sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,n_5,a_dub,a_sub,q_720,q_480/manifest.json"
+  ],
+  "streamingAddons": [
+    "https://animestream-addon.keypop3750.workers.dev/sm=https|sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,n_5,a_dub,a_sub,q_720,q_480/manifest.json"
+  ],
+  "subtitlesAddons": [
+    "https://subsource.strem.top/c2tfN2I2ODZjZDYzNGZiODJlMjRjMjU3ZmFiYjJmNGM0MTcwZTI5OGJhOGQ1ZjlkMmM3ZjYwZWZmZDhhZDM1ODdmZS9lbmdsaXNoLGhpbmRpLHRlbHVndS9oaUluY2x1ZGUvdHlwZTowLw/manifest.json",
+    "https://opensubtitlesv3-pro.dexter21767.com/eyJsYW5ncyI6WyJlbmdsaXNoIiwiaGluZGkiLCJ0YW1pbCIsInRlbHVndSJdLCJzb3VyY2UiOiJ0cnVzdGVkIiwiYWlUcmFuc2xhdGVkIjp0cnVlLCJhdXRvQWRqdXN0bWVudCI6dHJ1ZX0=/manifest.json"
+  ]
+}
