@@ -9,10 +9,15 @@
   "categories": ["Movie", "TvSeries", "Anime"],
   "isAdult": false,
   "addons": [
+    "https://dramayo.stream/manifest.json",
+    "https://streamio-hianime.onrender.com/manifest.json",
+    "https://stremio.yukistreams.xyz/manifest.json",
+    "https://stremio-animepahe.tsz1da2a.workers.dev/manifest.json",
+
+
     "https://hdhub.thevolecitor.qzz.io/manifest.json",
     "https://hdhub.thevolecitor.qzz.io/eyJ0b3Jib3giOiJ1bnNldCIsInF1YWxpdGllcyI6IjIxNjBwLDEwODBwLDcyMHAiLCJzb3J0IjoiZGVzYyJ9/manifest.json",
     "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
-    "https://dramayo.stream/manifest.json",
     "https://autostreamtest.onrender.com/manifest.json",
 
 
