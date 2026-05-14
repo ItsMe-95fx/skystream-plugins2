@@ -8,7 +8,7 @@
   "languages": ["en"],
   "categories": ["Anime"],
   "catalogueAddons": [
-    "https://animestream-addon.keypop3750.workers.dev/sm=https|sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,n_5,a_dub,a_sub,q_720,q_480/manifest.json"
+    "https://1fe84bc728af-stremio-anime-catalogs.baby-beamup.club/%7B%22cinemeta%22%3A%22on%22%2C%22myanimelist_top-all-time%22%3A%22on%22%2C%22myanimelist_top-airing%22%3A%22on%22%2C%22myanimelist_top-series%22%3A%22on%22%2C%22myanimelist_top-movies%22%3A%22on%22%2C%22myanimelist_popular%22%3A%22on%22%2C%22myanimelist_most-favorited%22%3A%22on%22%2C%22kitsu_highest-rated%22%3A%22on%22%2C%22anisearch_popular%22%3A%22on%22%7D/manifest.json"
   ],
   "streamingAddons": [
     "https://nagare.nexioapp.org/%7B%22NexioNagare%22%3A%22eyJ1c2VFbmdsaXNoVGl0bGVzIjp0cnVlLCJwcmVmZXJEdWIiOnRydWUsInByb3ZpZGVycyI6WyJvbmV0d290aHJlZWFuaW1lIiwiYW5pem9uZSIsImFuaW1lbm9zdWIiLCJhbmltZXBhaGUiLCJnb2pvIl0sInJlc29sdXRpb25zIjpbIjRLIiwiMTA4MHAiLCI3MjBwIiwiNDgwcCIsImF1dG8iXSwic2hvd1NlYXNvbmFsU2VyaWVzIjp0cnVlLCJzaG93QWlyaW5nU2VyaWVzIjp0cnVlLCJzaG93VHJlbmRpbmdTZXJpZXMiOnRydWUsInNob3dUb3BTZXJpZXMiOnRydWUsInNob3dUcmVuZGluZ01vdmllcyI6dHJ1ZSwic2hvd1RvcE1vdmllcyI6dHJ1ZX0%22%7D/manifest.json"
