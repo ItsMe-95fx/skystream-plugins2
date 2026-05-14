@@ -212,13 +212,10 @@
     // ── Multi-page fetch ────────────────────────────────────────
     async function fetchPages(endpoint, params, mediaType, maxItems) {
         maxItems = maxItems || MAX_ITEMS;
+        var page = params.page || 1;
         var all = [];
-        for (var p = 1; p <= MAX_PAGES; p++) {
-            var data = await tmdb(endpoint, Object.assign({}, params, { page: p }));
-            if (!data || !data.results || data.results.length === 0) break;
-            all = all.concat(data.results);
-            if (all.length >= maxItems) break;
-        }
+        var data = await tmdb(endpoint, Object.assign({}, params, { page: page }));
+        if (data && data.results) all = data.results;
         return all.slice(0, maxItems).map(function(r) {
             return toItem(r, { mediaType: mediaType || r.media_type || "movie" });
         });
@@ -227,17 +224,17 @@
     // ── Multi-page + post-filter ────────────────────────────────
     async function fetchFiltered(endpoint, params, filterFn, mediaType, maxItems) {
         maxItems = maxItems || 40;
+        var page = params.page || 1;
         var all = [];
-        for (var p = 1; p <= MAX_PAGES; p++) {
+        // Fetch up to 2 pages for filtered results (more chances to find matches)
+        for (var p = page; p <= page + 1 && all.length < maxItems; p++) {
             var data = await tmdb(endpoint, Object.assign({}, params, { page: p }));
             if (!data || !data.results || data.results.length === 0) break;
-            for (var i = 0; i < data.results.length; i++) {
+            for (var i = 0; i < data.results.length && all.length < maxItems; i++) {
                 if (filterFn(data.results[i])) {
                     all.push(data.results[i]);
-                    if (all.length >= maxItems) break;
                 }
             }
-            if (all.length >= maxItems) break;
         }
         return all.slice(0, maxItems).map(function(r) {
             return toItem(r, { mediaType: mediaType || "tv" });
@@ -294,33 +291,27 @@
     // ── Discover helpers ────────────────────────────────────────
     async function discoverTv(extra, maxItems) {
         maxItems = maxItems || MAX_ITEMS;
+        var page = extra.page || 1;
         var all = [];
-        for (var p = 1; p <= MAX_PAGES; p++) {
-            var data = await tmdb("/discover/tv", Object.assign({
-                language: "en-US",
-                sort_by: "popularity.desc",
-                "vote_count.gte": 10
-            }, extra, { page: p }));
-            if (!data || !data.results || data.results.length === 0) break;
-            all = all.concat(data.results);
-            if (all.length >= maxItems) break;
-        }
+        var data = await tmdb("/discover/tv", Object.assign({
+            language: "en-US",
+            sort_by: "popularity.desc",
+            "vote_count.gte": 10
+        }, extra, { page: page }));
+        if (data && data.results) all = data.results;
         return all.slice(0, maxItems).map(function(r) { return toItem(r, { mediaType: "tv" }); });
     }
 
     async function discoverMovie(extra, maxItems) {
         maxItems = maxItems || MAX_ITEMS;
+        var page = extra.page || 1;
         var all = [];
-        for (var p = 1; p <= MAX_PAGES; p++) {
-            var data = await tmdb("/discover/movie", Object.assign({
-                language: "en-US",
-                sort_by: "popularity.desc",
-                "vote_count.gte": 10
-            }, extra, { page: p }));
-            if (!data || !data.results || data.results.length === 0) break;
-            all = all.concat(data.results);
-            if (all.length >= maxItems) break;
-        }
+        var data = await tmdb("/discover/movie", Object.assign({
+            language: "en-US",
+            sort_by: "popularity.desc",
+            "vote_count.gte": 10
+        }, extra, { page: page }));
+        if (data && data.results) all = data.results;
         return all.slice(0, maxItems).map(function(r) { return toItem(r, { mediaType: "movie" }); });
     }
 
@@ -330,108 +321,108 @@
         "Prime Video": "9",
         "Disney+": "337",
         "HBO Max": "384",
-        "Apple TV+": "350",
-        "Hotstar": "122",
-        "Zee5": "113",
-        "Sony Liv": "115"
+        "Apple TV+": "350"
     };
 
-    // ── Fetch OTT category (movies + series on a platform) ──
-    async function fetchOttCategory(providerName, providerId, maxItems) {
-        maxItems = maxItems || 30;
-        var results = [];
-        // Try movies first
+    // ── Fetch a single page from TMDB and convert to items ──
+    async function fetchPage(endpoint, params, mediaType, page) {
         try {
+            params = Object.assign({}, params || {}, { page: page || 1 });
+            var data = await tmdb(endpoint, params);
+            if (data && data.results) {
+                return data.results.map(function(r) {
+                    return toItem(r, { mediaType: mediaType || r.media_type || "movie" });
+                });
+            }
+        } catch (e) {}
+        return [];
+    }
+
+    // ── Fetch OTT category (movies + series on a platform) ──
+    async function fetchOttPage(providerId, page) {
+        page = page || 1;
+        var results = [];
+        // Interleave: even pages = movies, odd pages = series
+        // Page 1: 10 movies, Page 2: 10 series, Page 3: 10 movies, etc.
+        if (page % 2 === 1 || page === 1) {
+            var moviePage = Math.ceil(page / 2);
             var movieData = await tmdb("/discover/movie", {
                 language: "en-US",
                 with_watch_providers: providerId,
                 watch_region: "US",
                 sort_by: "popularity.desc",
-                "vote_count.gte": 10
+                "vote_count.gte": 10,
+                page: moviePage
             });
             if (movieData && movieData.results) {
-                results = results.concat(movieData.results.slice(0, 15).map(function(r) {
-                    return toItem(r, { mediaType: "movie" });
-                }));
+                results = movieData.results.map(function(r) { return toItem(r, { mediaType: "movie" }); });
             }
-        } catch (e) {}
-        // Then TV series
-        try {
+        } else {
+            var tvPage = page / 2;
             var tvData = await tmdb("/discover/tv", {
                 language: "en-US",
                 with_watch_providers: providerId,
                 watch_region: "US",
                 sort_by: "popularity.desc",
-                "vote_count.gte": 10
+                "vote_count.gte": 10,
+                page: tvPage
             });
             if (tvData && tvData.results) {
-                results = results.concat(tvData.results.slice(0, 15).map(function(r) {
-                    return toItem(r, { mediaType: "tv" });
-                }));
+                results = tvData.results.map(function(r) { return toItem(r, { mediaType: "tv" }); });
             }
-        } catch (e) {}
-        return results.slice(0, maxItems);
+        }
+        return results;
+    }
+
+    // ── Helper to build a single category promise ──
+    function homeCategory(name, endpoint, params, mediaType, page) {
+        return fetchPage(endpoint, params, mediaType, page).then(function(items) {
+            if (items.length > 0) R[name] = items;
+        });
     }
 
     // ============================================================
-    //  getHome — dynamic daily categories + OTT platforms
+    //  getHome — paginated, page=1 returns first 20 items per category
     // ============================================================
-    async function getHome(cb) {
-        var HOME_DEADLINE = 25000; // 25s max
+    async function getHome(cb, page) {
+        var HOME_DEADLINE = 25000;
+        var pageNum = parseInt(page) || 1;
         try {
             var R = {};
             var lang = "en-US";
             var deadlineTimer = null;
 
-            // Build all promises: daily trending + OTT categories
             var allPromises = [
-                // — Daily trending —
-                tmdb("/trending/all/day", { language: lang }).then(function(d) {
-                    if (d && d.results) R["Trending Now"] = d.results.slice(0, 20).map(function(r) {
-                        return toItem(r, { mediaType: r.media_type || "movie" });
-                    });
-                }),
+                homeCategory("Trending Now", "/trending/all/day", { language: lang }, null, pageNum),
+                homeCategory("New Releases", "/movie/now_playing", { language: lang, region: "US" }, "movie", pageNum),
+                homeCategory("Currently Airing", "/tv/on_the_air", { language: lang }, "tv", pageNum),
+                homeCategory("Trending Movies", "/trending/movie/day", { language: lang }, "movie", pageNum),
+                homeCategory("Trending Series", "/trending/tv/day", { language: lang }, "tv", pageNum),
+                homeCategory("Popular Movies This Week", "/trending/movie/week", { language: lang }, "movie", pageNum),
+                homeCategory("Popular Series This Week", "/trending/tv/week", { language: lang }, "tv", pageNum),
+                homeCategory("Popular Movies", "/movie/popular", { language: lang }, "movie", pageNum),
+                homeCategory("Popular Series", "/tv/popular", { language: lang }, "tv", pageNum),
+                homeCategory("Top Rated Movies", "/movie/top_rated", { language: lang }, "movie", pageNum),
+                homeCategory("Top Rated Series", "/tv/top_rated", { language: lang }, "tv", pageNum),
 
-                // — New releases —
-                fetchPages("/movie/now_playing", { language: lang, region: "US" }, "movie", 30).then(function(x) { if (x.length) R["New Releases"] = x; }),
-                fetchPages("/tv/on_the_air", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["Currently Airing"] = x; }),
-
-                // — Trending today —
-                fetchPages("/trending/movie/day", { language: lang }, "movie", 30).then(function(x) { if (x.length) R["Trending Movies"] = x; }),
-                fetchPages("/trending/tv/day", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["Trending Series"] = x; }),
-
-                // — Trending this week —
-                fetchPages("/trending/movie/week", { language: lang }, "movie", 30).then(function(x) { if (x.length) R["Popular Movies This Week"] = x; }),
-                fetchPages("/trending/tv/week", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["Popular Series This Week"] = x; }),
-
-                // — Popular —
-                fetchPages("/movie/popular", { language: lang }, "movie", 30).then(function(x) { if (x.length) R["Popular Movies"] = x; }),
-                fetchPages("/tv/popular", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["Popular Series"] = x; }),
-
-                // — Top rated —
-                fetchPages("/movie/top_rated", { language: lang }, "movie", 20).then(function(x) { if (x.length) R["Top Rated Movies"] = x; }),
-                fetchPages("/tv/top_rated", { language: lang }, "tv", 20).then(function(x) { if (x.length) R["Top Rated Series"] = x; }),
-
-                // — Anime & animation (trending + popular) —
-                fetchFiltered("/trending/tv/day", { language: lang }, isAnime, "tv", 20).then(function(x) { if (x.length) R["Trending Anime"] = x; }),
-                fetchFiltered("/trending/tv/day", { language: lang }, isWesternAnim, "tv", 20).then(function(x) { if (x.length) R["Trending Animation"] = x; }),
+                // Anime & animation
+                fetchFiltered("/trending/tv/day", { language: lang, page: pageNum }, isAnime, "tv", 20).then(function(x) { if (x.length) R["Trending Anime"] = x; }),
+                fetchFiltered("/trending/tv/day", { language: lang, page: pageNum }, isWesternAnim, "tv", 20).then(function(x) { if (x.length) R["Trending Animation"] = x; }),
                 discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc" }, 20).then(function(x) { if (x.length) R["Popular Anime"] = x; }),
                 discoverTv({ with_genres: "16", with_original_language: "en", sort_by: "popularity.desc" }, 20).then(function(x) { if (x.length) R["Popular Animation"] = x; }),
 
-                // — OTT Platform categories —
-                fetchOttCategory("Netflix", OTT_PROVIDERS["Netflix"], 20).then(function(x) { if (x.length) R["On Netflix"] = x; }),
-                fetchOttCategory("Prime Video", OTT_PROVIDERS["Prime Video"], 20).then(function(x) { if (x.length) R["On Prime Video"] = x; }),
-                fetchOttCategory("Disney+", OTT_PROVIDERS["Disney+"], 20).then(function(x) { if (x.length) R["On Disney+"] = x; }),
-                fetchOttCategory("HBO Max", OTT_PROVIDERS["HBO Max"], 20).then(function(x) { if (x.length) R["On HBO Max"] = x; }),
-                fetchOttCategory("Apple TV+", OTT_PROVIDERS["Apple TV+"], 20).then(function(x) { if (x.length) R["On Apple TV+"] = x; })
+                // OTT platforms (paginated)
+                fetchOttPage(OTT_PROVIDERS["Netflix"], pageNum).then(function(x) { if (x.length) R["On Netflix"] = x; }),
+                fetchOttPage(OTT_PROVIDERS["Prime Video"], pageNum).then(function(x) { if (x.length) R["On Prime Video"] = x; }),
+                fetchOttPage(OTT_PROVIDERS["Disney+"], pageNum).then(function(x) { if (x.length) R["On Disney+"] = x; }),
+                fetchOttPage(OTT_PROVIDERS["HBO Max"], pageNum).then(function(x) { if (x.length) R["On HBO Max"] = x; }),
+                fetchOttPage(OTT_PROVIDERS["Apple TV+"], pageNum).then(function(x) { if (x.length) R["On Apple TV+"] = x; })
             ];
 
-            // Race against deadline
             var deadlineP = new Promise(function(resolve) { deadlineTimer = setTimeout(resolve, HOME_DEADLINE); });
             await Promise.race([Promise.allSettled(allPromises), deadlineP]);
             clearTimeout(deadlineTimer);
 
-            // Return whatever we got
             var clean = {};
             for (var cat in R) {
                 if (R.hasOwnProperty(cat) && R[cat] && R[cat].length > 0) {
@@ -442,7 +433,7 @@
             if (Object.keys(clean).length === 0) {
                 cb({ success: false, errorCode: "NO_DATA", message: "No data received within deadline" });
             } else {
-                cb({ success: true, data: clean });
+                cb({ success: true, data: clean, page: pageNum });
             }
         } catch (e) {
             console.error("[TMDB] getHome:", e.message || e);
