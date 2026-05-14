@@ -385,7 +385,7 @@
     //  getHome — paginated, page=1 returns first 20 items per category
     // ============================================================
     async function getHome(cb, page) {
-        var HOME_DEADLINE = 25000;
+        var HOME_DEADLINE = 35000;
         var pageNum = parseInt(page) || 1;
         try {
             var R = {};
