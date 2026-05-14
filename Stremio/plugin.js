@@ -385,43 +385,45 @@
 
             // Build all promises: daily trending + OTT categories
             var allPromises = [
-                // — Daily trending (changes every day) —
+                // — Daily trending —
                 tmdb("/trending/all/day", { language: lang }).then(function(d) {
-                    if (d && d.results) R["🔥 Trending Now"] = d.results.slice(0, 20).map(function(r) {
+                    if (d && d.results) R["Trending Now"] = d.results.slice(0, 20).map(function(r) {
                         return toItem(r, { mediaType: r.media_type || "movie" });
                     });
                 }),
 
-                // — New releases (changes weekly) —
-                fetchPages("/movie/now_playing", { language: lang, region: "US" }, "movie", 30).then(function(x) { if (x.length) R["🎬 New Releases"] = x; }),
-                fetchPages("/tv/on_the_air", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["📺 Currently Airing"] = x; }),
+                // — New releases —
+                fetchPages("/movie/now_playing", { language: lang, region: "US" }, "movie", 30).then(function(x) { if (x.length) R["New Releases"] = x; }),
+                fetchPages("/tv/on_the_air", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["Currently Airing"] = x; }),
 
                 // — Trending today —
-                fetchPages("/trending/movie/day", { language: lang }, "movie", 30).then(function(x) { if (x.length) R["🔥 Trending Movies"] = x; }),
-                fetchPages("/trending/tv/day", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["🔥 Trending Series"] = x; }),
+                fetchPages("/trending/movie/day", { language: lang }, "movie", 30).then(function(x) { if (x.length) R["Trending Movies"] = x; }),
+                fetchPages("/trending/tv/day", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["Trending Series"] = x; }),
 
                 // — Trending this week —
-                fetchPages("/trending/movie/week", { language: lang }, "movie", 30).then(function(x) { if (x.length) R["📈 Popular Movies This Week"] = x; }),
-                fetchPages("/trending/tv/week", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["📈 Popular Series This Week"] = x; }),
+                fetchPages("/trending/movie/week", { language: lang }, "movie", 30).then(function(x) { if (x.length) R["Popular Movies This Week"] = x; }),
+                fetchPages("/trending/tv/week", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["Popular Series This Week"] = x; }),
 
-                // — Popular (changes daily) —
-                fetchPages("/movie/popular", { language: lang }, "movie", 30).then(function(x) { if (x.length) R["🍿 Popular Movies"] = x; }),
-                fetchPages("/tv/popular", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["📺 Popular Series"] = x; }),
+                // — Popular —
+                fetchPages("/movie/popular", { language: lang }, "movie", 30).then(function(x) { if (x.length) R["Popular Movies"] = x; }),
+                fetchPages("/tv/popular", { language: lang }, "tv", 30).then(function(x) { if (x.length) R["Popular Series"] = x; }),
 
-                // — Top rated (changes slowly but reliable) —
-                fetchPages("/movie/top_rated", { language: lang }, "movie", 20).then(function(x) { if (x.length) R["⭐ Top Rated Movies"] = x; }),
-                fetchPages("/tv/top_rated", { language: lang }, "tv", 20).then(function(x) { if (x.length) R["⭐ Top Rated Series"] = x; }),
+                // — Top rated —
+                fetchPages("/movie/top_rated", { language: lang }, "movie", 20).then(function(x) { if (x.length) R["Top Rated Movies"] = x; }),
+                fetchPages("/tv/top_rated", { language: lang }, "tv", 20).then(function(x) { if (x.length) R["Top Rated Series"] = x; }),
 
-                // — Anime & animation (via discover, not airing_today filter) —
-                discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc" }, 20).then(function(x) { if (x.length) R["🇯🇵 Popular Anime"] = x; }),
-                discoverTv({ with_genres: "16", with_original_language: "en", sort_by: "popularity.desc" }, 20).then(function(x) { if (x.length) R["🎨 Popular Animation"] = x; }),
+                // — Anime & animation (trending + popular) —
+                fetchFiltered("/trending/tv/day", { language: lang }, isAnime, "tv", 20).then(function(x) { if (x.length) R["Trending Anime"] = x; }),
+                fetchFiltered("/trending/tv/day", { language: lang }, isWesternAnim, "tv", 20).then(function(x) { if (x.length) R["Trending Animation"] = x; }),
+                discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc" }, 20).then(function(x) { if (x.length) R["Popular Anime"] = x; }),
+                discoverTv({ with_genres: "16", with_original_language: "en", sort_by: "popularity.desc" }, 20).then(function(x) { if (x.length) R["Popular Animation"] = x; }),
 
-                // — OTT Platform categories (what's popular on each service) —
-                fetchOttCategory("Netflix", OTT_PROVIDERS["Netflix"], 20).then(function(x) { if (x.length) R["📺 On Netflix"] = x; }),
-                fetchOttCategory("Prime Video", OTT_PROVIDERS["Prime Video"], 20).then(function(x) { if (x.length) R["📺 On Prime Video"] = x; }),
-                fetchOttCategory("Disney+", OTT_PROVIDERS["Disney+"], 20).then(function(x) { if (x.length) R["📺 On Disney+"] = x; }),
-                fetchOttCategory("HBO Max", OTT_PROVIDERS["HBO Max"], 20).then(function(x) { if (x.length) R["📺 On HBO Max"] = x; }),
-                fetchOttCategory("Apple TV+", OTT_PROVIDERS["Apple TV+"], 20).then(function(x) { if (x.length) R["📺 On Apple TV+"] = x; })
+                // — OTT Platform categories —
+                fetchOttCategory("Netflix", OTT_PROVIDERS["Netflix"], 20).then(function(x) { if (x.length) R["On Netflix"] = x; }),
+                fetchOttCategory("Prime Video", OTT_PROVIDERS["Prime Video"], 20).then(function(x) { if (x.length) R["On Prime Video"] = x; }),
+                fetchOttCategory("Disney+", OTT_PROVIDERS["Disney+"], 20).then(function(x) { if (x.length) R["On Disney+"] = x; }),
+                fetchOttCategory("HBO Max", OTT_PROVIDERS["HBO Max"], 20).then(function(x) { if (x.length) R["On HBO Max"] = x; }),
+                fetchOttCategory("Apple TV+", OTT_PROVIDERS["Apple TV+"], 20).then(function(x) { if (x.length) R["On Apple TV+"] = x; })
             ];
 
             // Race against deadline
