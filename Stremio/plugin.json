@@ -3,7 +3,7 @@
   "name": "Stremio",
   "version": 4,
   "baseUrl": "https://stremio-hub.local",
-  "description": "TMDB catalog + Stremio addons. getHome/search/load from TMDB. loadStreams from configured addons.",
+  "description": "TMDB catalog + Stremio addons. getHome/search/load from TMDB. loadStreams from configured addons. Addons sourced from https://stremio-addons.net",
   "authors": ["sunriseve"],
   "languages": ["en"],
   "categories": ["Movie", "TvSeries", "Anime"],
@@ -12,6 +12,8 @@
     "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
     "https://hdhub.thevolecitor.qzz.io/manifest.json",
     "https://hdhub.thevolecitor.qzz.io/eyJ0b3Jib3giOiJ1bnNldCIsInF1YWxpdGllcyI6IjIxNjBwLDEwODBwLDcyMHAiLCJzb3J0IjoiZGVzYyJ9/manifest.json",
+    "https://dramayo.stream/manifest.json",
+    "https://autostreamtest.onrender.com/manifest.json",
     "https://cinepro.iheartbarakobama.workers.dev/manifest.json",
     "https://nagare.nexioapp.org/manifest.json",
     "https://sword-watch.vercel.app/manifest.json",
@@ -27,12 +29,6 @@
 
 
     "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex%7Csort=seeders%7Climit=10/manifest.json",
-    "https://flixnest.app/flix-finder/eyJxdWFsaXR5IjpbIjEwODBwIiwiNzIwcCJdfQ/manifest.json",
-
-
-    "https://astral-mu-two.vercel.app/manifest.json",
-    "https://watcho3.rafaelzioneverest.workers.dev/manifest.json",
-    "https://inmax-tmv.onrender.com/manifest.json",
-    "https://indtorrents.codecrafts.workers.dev/manifest.json"
+    "https://flixnest.app/flix-finder/eyJxdWFsaXR5IjpbIjEwODBwIiwiNzIwcCJdfQ/manifest.json"
   ]
 }
