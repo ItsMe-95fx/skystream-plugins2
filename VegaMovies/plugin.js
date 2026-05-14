@@ -138,13 +138,14 @@
 
     function extractVcLinks(html) {
         if (!html) return [];
+        var seen = {};
         var links = [];
-        var re1 = /<p[^>]*>[\s\S]*?<a[^>]*href="([^"]+(?:vcloud|hubcloud)[^"]*)"[^>]*>[\s\S]*?<\/a>[\s\S]*?<\/p>/gi;
+        // Find ALL vcloud/hubcloud links regardless of parent element
+        var re = /<a[^>]*href="([^"]+(?:vcloud|hubcloud)[^"]*)"[^>]*>/gi;
         var m;
-        while ((m = re1.exec(html)) !== null) links.push(m[1]);
-        if (links.length === 0) {
-            var re2 = /<a[^>]*href="([^"]+(?:vcloud|hubcloud)[^"]*)"[^>]*>/gi;
-            while ((m = re2.exec(html)) !== null) links.push(m[1]);
+        while ((m = re.exec(html)) !== null) {
+            var url = m[1];
+            if (!seen[url]) { seen[url] = true; links.push(url); }
         }
         return links;
     }
@@ -226,33 +227,27 @@
             var quality = getQualityNum(headerText);
             var labelBase = headerText + (sizeText ? ' [' + sizeText + ']' : '');
 
-            // Extract server links matching Kotlin VCloud extractor pattern
-            // Kotlin: document.select("h2 a.btn") — links inside h2 with class btn
+            // Scan all <a> tags for download server links.
+            // Use a broad regex that works regardless of attribute order (class before href, etc.)
+            // Kotlin reference: document.select("h2 a.btn")
             var links = [];
-            var h2Re = /<h2[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*class="[^"]*btn[^"]*"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<\/h2>/gi;
-            var h2M;
-            while ((h2M = h2Re.exec(docHtml)) !== null) {
-                links.push({ href: h2M[1].trim(), text: stripHtml(h2M[2]).trim() });
-            }
-
-            // Fallback: scan all <a> tags for download-related links
-            if (links.length === 0) {
-                var aRe = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-                var aM;
-                while ((aM = aRe.exec(docHtml)) !== null) {
-                    var href = aM[1].trim();
-                    var text = stripHtml(aM[2]).trim();
-                    if (!href || href === '#' || href === 'admin') continue;
-                    var hLow = href.toLowerCase();
-                    var tLow = text.toLowerCase();
-                    if (hLow.indexOf('google') >= 0 || hLow.indexOf('telegram') >= 0 || hLow.indexOf('cdnjs') >= 0 || hLow.indexOf('fontawesome') >= 0 || hLow.indexOf('unpkg') >= 0) continue;
-                    if (tLow.indexOf('fsl') >= 0 || tLow.indexOf('pixel') >= 0 || tLow.indexOf('mega') >= 0 ||
-                        tLow.indexOf('download') >= 0 || tLow.indexOf('server') >= 0 || tLow.indexOf('10g') >= 0 ||
-                        tLow.indexOf('buzz') >= 0 || tLow.indexOf('fast') >= 0 || tLow.indexOf('direct') >= 0 ||
-                        hLow.indexOf('diskcdn') >= 0 || hLow.indexOf('hubcloud') >= 0 || hLow.indexOf('gofile') >= 0 ||
-                        hLow.indexOf('workers.dev') >= 0 || hLow.indexOf('pixeldra') >= 0) {
-                        links.push({ href: href, text: text });
-                    }
+            var aRe = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+            var aM;
+            while ((aM = aRe.exec(docHtml)) !== null) {
+                var href = aM[1].trim();
+                var text = stripHtml(aM[2]).trim();
+                if (!href || href === '#' || href === 'admin') continue;
+                var hLow = href.toLowerCase();
+                var tLow = text.toLowerCase();
+                // Skip known non-download links
+                if (hLow.indexOf('google') >= 0 || hLow.indexOf('telegram') >= 0 || hLow.indexOf('cdnjs') >= 0 || hLow.indexOf('fontawesome') >= 0 || hLow.indexOf('unpkg') >= 0) continue;
+                // Accept any link that has download-related text or looks like a file host
+                if (tLow.indexOf('fsl') >= 0 || tLow.indexOf('pixel') >= 0 || tLow.indexOf('mega') >= 0 ||
+                    tLow.indexOf('download') >= 0 || tLow.indexOf('server') >= 0 || tLow.indexOf('10g') >= 0 ||
+                    tLow.indexOf('buzz') >= 0 || tLow.indexOf('fast') >= 0 || tLow.indexOf('direct') >= 0 ||
+                    hLow.indexOf('diskcdn') >= 0 || hLow.indexOf('hubcloud') >= 0 || hLow.indexOf('gofile') >= 0 ||
+                    hLow.indexOf('workers.dev') >= 0 || hLow.indexOf('pixeldra') >= 0) {
+                    links.push({ href: href, text: text });
                 }
             }
 
