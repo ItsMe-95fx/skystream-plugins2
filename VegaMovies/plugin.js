@@ -102,6 +102,15 @@
         });
     }
 
+    function findAllLinks(html) {
+        if (!html) return [];
+        var links = [];
+        var re = /<a[^>]*href="([^"]+)"[^>]*>/gi;
+        var m;
+        while ((m = re.exec(html)) !== null) links.push(m[1]);
+        return links;
+    }
+
     function findBestVcLink(html) {
         if (!html) return null;
         var p1 = html.match(/<a[^>]*href="([^"]*(?:vcloud|hubcloud)[^"]*)"[^>]*>/i);
@@ -111,6 +120,33 @@
         var p3 = html.match(/<a[^>]*href="([^"]*(?:fastdl|filebee|gdtot|dgdrive)[^"]*)"[^>]*>/i);
         if (p3) return p3[1];
         return null;
+    }
+
+    function findFirstLinkContaining(html, keywords) {
+        if (!html) return null;
+        var re = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+        var m;
+        while ((m = re.exec(html)) !== null) {
+            var text = stripHtml(m[2]).toLowerCase();
+            var href = m[1].toLowerCase();
+            for (var ki = 0; ki < keywords.length; ki++) {
+                if (text.indexOf(keywords[ki]) >= 0 || href.indexOf(keywords[ki]) >= 0) return m[1];
+            }
+        }
+        return null;
+    }
+
+    function extractVcLinks(html) {
+        if (!html) return [];
+        var links = [];
+        var re1 = /<p[^>]*>[\s\S]*?<a[^>]*href="([^"]+(?:vcloud|hubcloud)[^"]*)"[^>]*>[\s\S]*?<\/a>[\s\S]*?<\/p>/gi;
+        var m;
+        while ((m = re1.exec(html)) !== null) links.push(m[1]);
+        if (links.length === 0) {
+            var re2 = /<a[^>]*href="([^"]+(?:vcloud|hubcloud)[^"]*)"[^>]*>/gi;
+            while ((m = re2.exec(html)) !== null) links.push(m[1]);
+        }
+        return links;
     }
 
     // ========================================================================
@@ -190,28 +226,33 @@
             var quality = getQualityNum(headerText);
             var labelBase = headerText + (sizeText ? ' [' + sizeText + ']' : '');
 
-            // Find ALL server links on the detail page.
-            // Be LINIENT: capture any <a> that looks like a download server
-            // (text contains: FSL, Pixel, Mega, Download, Server, 10G, Buzz, or the href
-            //  is NOT a known non-download URL like google, telegram, cdn, admin, #)
+            // Extract server links matching Kotlin VCloud extractor pattern
+            // Kotlin: document.select("h2 a.btn") — links inside h2 with class btn
             var links = [];
-            var aRe = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-            var aM;
-            while ((aM = aRe.exec(docHtml)) !== null) {
-                var href = aM[1].trim();
-                var text = stripHtml(aM[2]).trim();
-                if (!href || href === '#' || href === 'admin') continue;
-                var hLow = href.toLowerCase();
-                var tLow = text.toLowerCase();
-                // Skip known non-download links
-                if (hLow.indexOf('google') >= 0 || hLow.indexOf('telegram') >= 0 || hLow.indexOf('cdnjs') >= 0 || hLow.indexOf('fontawesome') >= 0 || hLow.indexOf('unpkg') >= 0) continue;
-                // Accept any link that has download-related text or looks like a file host
-                if (tLow.indexOf('fsl') >= 0 || tLow.indexOf('pixel') >= 0 || tLow.indexOf('mega') >= 0 ||
-                    tLow.indexOf('download') >= 0 || tLow.indexOf('server') >= 0 || tLow.indexOf('10g') >= 0 ||
-                    tLow.indexOf('buzz') >= 0 || tLow.indexOf('fast') >= 0 || tLow.indexOf('direct') >= 0 ||
-                    hLow.indexOf('diskcdn') >= 0 || hLow.indexOf('hubcloud') >= 0 || hLow.indexOf('gofile') >= 0 ||
-                    hLow.indexOf('workers.dev') >= 0 || hLow.indexOf('pixeldra') >= 0) {
-                    links.push({ href: href, text: text });
+            var h2Re = /<h2[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*class="[^"]*btn[^"]*"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<\/h2>/gi;
+            var h2M;
+            while ((h2M = h2Re.exec(docHtml)) !== null) {
+                links.push({ href: h2M[1].trim(), text: stripHtml(h2M[2]).trim() });
+            }
+
+            // Fallback: scan all <a> tags for download-related links
+            if (links.length === 0) {
+                var aRe = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+                var aM;
+                while ((aM = aRe.exec(docHtml)) !== null) {
+                    var href = aM[1].trim();
+                    var text = stripHtml(aM[2]).trim();
+                    if (!href || href === '#' || href === 'admin') continue;
+                    var hLow = href.toLowerCase();
+                    var tLow = text.toLowerCase();
+                    if (hLow.indexOf('google') >= 0 || hLow.indexOf('telegram') >= 0 || hLow.indexOf('cdnjs') >= 0 || hLow.indexOf('fontawesome') >= 0 || hLow.indexOf('unpkg') >= 0) continue;
+                    if (tLow.indexOf('fsl') >= 0 || tLow.indexOf('pixel') >= 0 || tLow.indexOf('mega') >= 0 ||
+                        tLow.indexOf('download') >= 0 || tLow.indexOf('server') >= 0 || tLow.indexOf('10g') >= 0 ||
+                        tLow.indexOf('buzz') >= 0 || tLow.indexOf('fast') >= 0 || tLow.indexOf('direct') >= 0 ||
+                        hLow.indexOf('diskcdn') >= 0 || hLow.indexOf('hubcloud') >= 0 || hLow.indexOf('gofile') >= 0 ||
+                        hLow.indexOf('workers.dev') >= 0 || hLow.indexOf('pixeldra') >= 0) {
+                        links.push({ href: href, text: text });
+                    }
                 }
             }
 
@@ -221,7 +262,7 @@
                 if (t.indexOf('FSLv2') >= 0) { if (cb) cb(h, quality, 'FSLv2 Server', labelBase); return 1; }
                 if (t.indexOf('Mega Server') >= 0) { if (cb) cb(h, quality, 'Mega Server', labelBase); return 1; }
                 if (t.indexOf('Download File') >= 0) { if (cb) cb(h, quality, '', labelBase); return 1; }
-                if (t.indexOf('BuzzServer') >= 0) {
+                if (t.indexOf('BuzzServer') >= 0 || t.indexOf('Buzz Server') >= 0) {
                     try {
                         var bUrl = h.charAt(h.length-1) === '/' ? h : h + '/download';
                         var bRes = await http_get(bUrl, Object.assign({}, HEADERS, { 'Referer': tokenUrl }));
@@ -243,14 +284,18 @@
                     }
                     return 0;
                 }
-                if (t.indexOf('10Gbps') >= 0 || t.indexOf('10 gbps') >= 0 || t.indexOf('10gbps') >= 0 || h.indexOf('hubcloud.cx') >= 0) {
+                if (t.indexOf('10Gbps') >= 0 || t.indexOf('10 gbps') >= 0 || t.indexOf('10gbps') >= 0 || t.indexOf('10Gbps Server') >= 0 || h.indexOf('hubcloud.cx') >= 0) {
                     var fLink = h;
                     var linkParts = h.split('link=');
                     if (linkParts.length > 1) { var afterLink = linkParts[1]; var ampIdx = afterLink.indexOf('&'); fLink = ampIdx >= 0 ? afterLink.substring(0, ampIdx) : afterLink; fLink = decodeURIComponent(fLink); }
                     if (cb) cb(fLink, quality, 'Download', labelBase); return 1;
                 }
-                // Generic catch: any remaining download-related link
-                if (t.toLowerCase().indexOf('download') >= 0 || h.indexOf('hubcloud') >= 0 || h.indexOf('diskcdn') >= 0 || h.indexOf('gofile') >= 0 || h.indexOf('workers.dev') >= 0) {
+                // Generic catch
+                if (t.toLowerCase().indexOf('download') >= 0 || h.indexOf('hubcloud') >= 0 || h.indexOf('pixeldra') >= 0 || h.indexOf('diskcdn') >= 0 || h.indexOf('gofile') >= 0 || h.indexOf('workers.dev') >= 0) {
+                    if (cb) cb(h, quality, 'Server', labelBase); return 1;
+                }
+                // Last resort: any link that looks like a file host
+                if (h.indexOf('http') >= 0 && t.length > 0 && t.toLowerCase().indexOf('server') >= 0) {
                     if (cb) cb(h, quality, 'Server', labelBase); return 1;
                 }
                 return 0;
@@ -434,7 +479,6 @@
             var episodes = [];
 
             if (isSeries) {
-                // Series: find quality tags, extract nexdrive links, create episodes
                 var hTags = h3Tags.concat(findElements(html, 'h5')).filter(function(el) {
                     return /4k|\d{3,4}p/i.test(el.text) && el.text.toLowerCase().indexOf('zip') < 0;
                 });
@@ -447,65 +491,37 @@
                     var tPos = html.indexOf(tag.html);
                     var ns = null;
                     if (tPos >= 0) ns = nextSiblingAt(html, tPos + tag.html.length);
-                    var pLinks = [];
-                    if (ns && ns.tag === 'p') {
-                        var aRe = /<a[^>]*href="([^"]+)"[^>]*>/gi;
-                        var aM;
-                        while ((aM = aRe.exec(ns.html)) !== null) pLinks.push(aM[1]);
-                    }
 
-                    // Find V-Cloud link FIRST (its intermediate page has vcloud.zip URLs).
-                    // G-Direct pages DON'T have vcloud.zip links, so prioritize V-Cloud.
-                    var found = null;
-                    var aRe2 = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-                    var aM2;
-                    // First pass: look for V-Cloud text
-                    while ((aM2 = aRe2.exec(ns.html)) !== null) {
-                        var btnText = stripHtml(aM2[2]).toLowerCase();
-                        if (btnText.indexOf('v-cloud') >= 0) { found = aM2[1]; break; }
-                    }
-                    // Second pass: fallback to G-Direct if no V-Cloud found
-                    if (!found) {
-                        aRe2.lastIndex = 0;
-                        while ((aM2 = aRe2.exec(ns.html)) !== null) {
-                            var btnText2 = stripHtml(aM2[2]).toLowerCase();
-                            if (btnText2.indexOf('g-direct') >= 0) { found = aM2[1]; break; }
-                        }
-                    }
-                    // Last resort: take any link
-                    if (!found) {
-                        var aRe3 = /<a[^>]*href="([^"]+)"[^>]*>/gi;
-                        var aM3 = aRe3.exec(ns.html);
-                        if (aM3) found = aM3[1];
-                    }
+                    var searchHtml = (ns && ns.html) || tag.html;
+
+                    var found = findFirstLinkContaining(searchHtml, ['v-cloud', 'episode', 'download', 'g-direct']);
+                    if (!found) found = findFirstLinkContaining(searchHtml, ['nexdrive']);
 
                     if (found) {
                         var interHtml = await fetchUrl(fixUrl(found));
                         if (interHtml) {
-                            var vcRe = /<a[^>]*href="([^"]+(?:vcloud|hubcloud)[^"]+)"[^>]*>/gi;
-                            var vcM;
-                            var vcCount = 0;
-                            while ((vcM = vcRe.exec(interHtml)) !== null) {
-                                vcCount++;
-                                var mKey = realSeason + '_' + vcCount;
-                                if (epMap[mKey]) epMap[mKey].push(vcM[1]);
-                                else epMap[mKey] = [vcM[1]];
+                            var vcLinks = extractVcLinks(interHtml);
+                            for (var vci = 0; vci < vcLinks.length; vci++) {
+                                var mKey = realSeason + '_' + (vci + 1);
+                                if (epMap[mKey]) {
+                                    if (epMap[mKey].indexOf(vcLinks[vci]) < 0) epMap[mKey].push(vcLinks[vci]);
+                                } else {
+                                    epMap[mKey] = [vcLinks[vci]];
+                                }
                             }
                         }
                     }
                 }
 
-                var keys = Object.keys(epMap);
+                var keys = Object.keys(epMap).sort();
                 for (var ki = 0; ki < keys.length; ki++) {
                     var parts = keys[ki].split('_');
                     var sn = parseInt(parts[0]) || 1;
                     var en = parseInt(parts[1]) || (ki + 1);
                     var srcs = epMap[keys[ki]];
-                    // Use FIRST V-Cloud URL as episode URL (plain HTTP, no JSON)
-                    // loadStreams will re-fetch the page for multi-quality streams
                     episodes.push({
                         name: 'S' + sn + ' E' + en,
-                        url: srcs[0] || '',
+                        url: JSON.stringify(srcs),
                         season: sn,
                         episode: en,
                         posterUrl: poster || '',
@@ -554,9 +570,33 @@
 
     async function loadStreams(url, cb) {
         try {
+            // JSON array of V-Cloud URLs (series episode with multiple quality sources)
+            if (typeof url === 'string' && url.indexOf('[') === 0) {
+                try {
+                    var srcs = JSON.parse(url);
+                    if (Array.isArray(srcs) && srcs.length > 0) {
+                        var allStreams = [];
+                        for (var si = 0; si < srcs.length; si++) {
+                            try {
+                                var st = await withTimeout(function() { return extractSingleVc(srcs[si], url); }, 60000);
+                                for (var sj = 0; sj < st.length; sj++) {
+                                    var dup = false;
+                                    for (var sk = 0; sk < allStreams.length; sk++) {
+                                        if (allStreams[sk].url === st[sj].url) { dup = true; break; }
+                                    }
+                                    if (!dup) allStreams.push(st[sj]);
+                                }
+                            } catch(e) {}
+                        }
+                        cb({ success: true, data: allStreams });
+                        return;
+                    }
+                } catch(e) {}
+            }
+
             var lower = url.toLowerCase();
 
-            // Direct V-Cloud/HubCloud URL (series episodes)
+            // Direct V-Cloud/HubCloud URL (series episodes with single quality)
             if (lower.indexOf('vcloud') >= 0 || lower.indexOf('hubcloud') >= 0) {
                 var st = await withTimeout(function() { return extractSingleVc(url, url); }, 60000);
                 cb({ success: true, data: st });
@@ -590,26 +630,44 @@
             var html = await withTimeout(function() { return fetchUrl(url); }, 30000);
             if (!html || html.indexOf('Cloudflare') >= 0) { cb({ success: true, data: [] }); return; }
 
-            // Find ALL dwd-button links (one per quality)
-            var dwdRe = /<a[^>]*href="([^"]+)"[^>]*>(?:(?!<\/a>)[\s\S])*?<button[^>]*class="[^"]*dwd-button[^"]*"[^>]*>/gi;
             var btns = [];
+            var bs = getBaseUrl(url);
+
+            // Pattern 1: a:has(button.dwd-button) — matching Kotlin
+            var dwdRe = /<a[^>]*href="([^"]+)"[^>]*>(?:(?!<\/a>)[\s\S])*?<button[^>]*class="[^"]*dwd-button[^"]*"[^>]*>/gi;
             var bm;
             while ((bm = dwdRe.exec(html)) !== null) {
                 var bUrl = fixUrl(bm[1]);
-                var bs = getBaseUrl(url);
                 if (bUrl && bUrl !== '#' && bUrl !== '/' && bUrl !== url && bUrl !== bs + '/' && bUrl !== bs) btns.push(bUrl);
             }
 
-            // If no dwd-button found, try alternative: find any nexdrive URL in <p> near <h5> quality tags
+            // Pattern 2: a > button with any download class
             if (btns.length === 0) {
-                var altRe = /<h5[^>]*>([\s\S]*?)<\/h5>[\s\S]*?<a[^>]*href="([^"]*nexdrive[^"]*)"[^>]*>/gi;
+                var btnRe2 = /<a[^>]*href="([^"]+)"[^>]*>(?:(?!<\/a>)[\s\S])*?<button[^>]*class="[^"]*(?:dwd|btn|download|dl)[^"]*"[^>]*>/gi;
+                while ((bm = btnRe2.exec(html)) !== null) {
+                    var b2Url = fixUrl(bm[1]);
+                    if (b2Url && b2Url !== '#' && b2Url !== '/' && b2Url.indexOf(bs) !== 0 && b2Url !== bs + '/' && b2Url !== bs) btns.push(b2Url);
+                }
+            }
+
+            // Pattern 3: nexdrive links near h3/h5 quality tags
+            if (btns.length === 0) {
+                var altRe = /<h[3456][^>]*>([\s\S]*?)<\/h[3456]>[\s\S]*?<a[^>]*href="([^"]*nexdrive[^"]*)"[^>]*>/gi;
                 var altM;
                 while ((altM = altRe.exec(html)) !== null) { btns.push(fixUrl(altM[2])); }
             }
 
+            // Pattern 4: any nexdrive link on the page
+            if (btns.length === 0) {
+                var allLinks = findAllLinks(html);
+                for (var li = 0; li < allLinks.length; li++) {
+                    if (allLinks[li].indexOf('nexdrive') >= 0) btns.push(fixUrl(allLinks[li]));
+                }
+            }
+
             if (btns.length === 0) { cb({ success: true, data: [] }); return; }
 
-            // Process each quality SEQUENTIALLY with generous timeouts
+            // Process each quality SEQUENTIALLY
             var allStreams = [];
             for (var bi = 0; bi < btns.length; bi++) {
                 try {
@@ -620,10 +678,17 @@
                         var qSt = await withTimeout(function() { return extractSingleVc(fixUrl(best), btns[bi]); }, 60000);
                         for (var si = 0; si < qSt.length; si++) allStreams.push(qSt[si]);
                     } else {
-                        // No V-Cloud link found: try FastDL on the nexdrive page
-                        var fastM2 = dlH.match(/<a[^>]*href="([^"]*fastdl[^"]*)"[^>]*>/i);
-                        if (fastM2) {
-                            var fSt = await withTimeout(function() { return extractSingleVc(fixUrl(fastM2[1]), btns[bi]); }, 60000);
+                        // No V-Cloud link found: try any link on the nexdrive page
+                        var nxLinks = findAllLinks(dlH);
+                        var nxFound = null;
+                        for (var nli = 0; nli < nxLinks.length; nli++) {
+                            var nl = nxLinks[nli].toLowerCase();
+                            if (nl.indexOf('vcloud') >= 0 || nl.indexOf('hubcloud') >= 0 || nl.indexOf('fastdl') >= 0 || nl.indexOf('nexdrive') >= 0) {
+                                nxFound = nxLinks[nli]; break;
+                            }
+                        }
+                        if (nxFound) {
+                            var fSt = await withTimeout(function() { return extractSingleVc(fixUrl(nxFound), btns[bi]); }, 60000);
                             for (var si = 0; si < fSt.length; si++) allStreams.push(fSt[si]);
                         }
                     }
