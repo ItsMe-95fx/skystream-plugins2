@@ -293,12 +293,15 @@
         maxItems = maxItems || MAX_ITEMS;
         var page = extra.page || 1;
         var all = [];
-        var data = await tmdb("/discover/tv", Object.assign({
-            language: "en-US",
-            sort_by: "popularity.desc",
-            "vote_count.gte": 10
-        }, extra, { page: page }));
-        if (data && data.results) all = data.results;
+        for (var p = page; p <= page + 1; p++) {
+            var data = await tmdb("/discover/tv", Object.assign({
+                language: "en-US",
+                sort_by: "popularity.desc",
+                "vote_count.gte": 10
+            }, extra, { page: p }));
+            if (data && data.results) all = all.concat(data.results);
+            if (all.length >= maxItems) break;
+        }
         return all.slice(0, maxItems).map(function(r) { return toItem(r, { mediaType: "tv" }); });
     }
 
@@ -390,8 +393,8 @@
                 "Popular Series": fetchPage("/tv/popular", { language: "en-US" }, "tv", pageNum),
                 "Top Rated Movies": fetchPage("/movie/top_rated", { language: "en-US" }, "movie", pageNum),
                 "Top Rated Series": fetchPage("/tv/top_rated", { language: "en-US" }, "tv", pageNum),
-                "Trending Anime": fetchFiltered("/trending/tv/day", { language: "en-US", page: pageNum }, isAnime, "tv", 20),
-                "Trending Animation": fetchFiltered("/trending/tv/day", { language: "en-US", page: pageNum }, isWesternAnim, "tv", 20)
+                "Trending Anime": discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc", page: pageNum }, 40),
+                "Trending Animation": discoverTv({ with_genres: "16", with_original_language: "en", sort_by: "popularity.desc", page: pageNum }, 40)
             };
 
             var deadlineTimer = null;
