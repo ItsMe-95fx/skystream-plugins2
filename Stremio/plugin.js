@@ -32,10 +32,10 @@
     ];
 
     const IMG_URL = "https://image.tmdb.org/t/p";
-    const POSTER = "w92";      // Absolute minimum quality (92px)
-    const BACKDROP = "w300";   // Minimum backdrop (300px)
-    const PROFILE = "w45";     // Minimum profile (45px)
-    const STILL = "w92";       // Minimum still (92px)
+    const POSTER = "w342";     // Medium quality for posters
+    const BACKDROP = "w780";   // Medium quality for backgrounds
+    const PROFILE = "w185";    // Medium quality for cast photos
+    const STILL = "w300";      // Medium quality for episode stills
     const ANIME_GENRE = 16;
 
     const MAX_PAGES = 2;         // Reduced for speed (was 5)
@@ -522,43 +522,52 @@
 
             if (isTv && details) {
                 var seasonList = details.seasons || [];
+                // Fetch seasons in parallel with a 15s deadline
+                var LOAD_DEADLINE = 15000;
+                var deadlineTimer = null;
+                var seasonTasks = [];
                 var fetched = 0;
-                var maxSeasonsToFetch = 25;
+                var maxSeasonsToFetch = 15; // Reduced from 25 for speed
 
                 for (var si = 0; si < seasonList.length && fetched < maxSeasonsToFetch; si++) {
                     var seasonInfo = seasonList[si];
                     var seasonNum = seasonInfo.season_number;
                     if (seasonNum === 0 || !seasonInfo.episode_count || seasonInfo.episode_count === 0) continue;
+                    fetched++;
+                    seasonTasks.push(tmdb("/tv/" + tmdbId + "/season/" + seasonNum, { language: "en-US" }));
+                }
+                var deadlineP = new Promise(function(r) { deadlineTimer = setTimeout(r, LOAD_DEADLINE); });
+                var seasonResults = await Promise.race([Promise.allSettled(seasonTasks), deadlineP]);
+                clearTimeout(deadlineTimer);
 
-                    try {
-                        var seasonData = await tmdb("/tv/" + tmdbId + "/season/" + seasonNum, { language: "en-US" });
-                        if (seasonData && seasonData.episodes) {
-                            fetched++;
-                            for (var e = 0; e < seasonData.episodes.length; e++) {
-                                var ep = seasonData.episodes[e];
-                                var epNum = ep.episode_number || (e + 1);
-                                episodes.push(new Episode({
-                                    name: "S" + pad(seasonNum) + "E" + pad(epNum) + " - " + (ep.name || ""),
-                                    url: JSON.stringify({
-                                        tmdbId: tmdbId,
-                                        mediaType: "tv",
-                                        seasonNumber: seasonNum,
-                                        episodeNumber: epNum,
-                                        title: title,
-                                        episodeTitle: ep.name || "",
-                                        stillPath: ep.still_path
-                                    }),
-                                    season: seasonNum,
-                                    episode: epNum,
-                                    rating: ep.vote_average ? Number(Number(ep.vote_average).toFixed(1)) : undefined,
-                                    runtime: ep.runtime || undefined,
-                                    airDate: ep.air_date || undefined,
-                                    posterUrl: ep.still_path ? still(ep.still_path) : poster(posterPath)
-                                }));
-                            }
+                if (seasonResults && Array.isArray(seasonResults)) {
+                    for (var si = 0; si < seasonResults.length; si++) {
+                        var r = seasonResults[si];
+                        if (r.status !== "fulfilled" || !r.value || !r.value.episodes) continue;
+                        var seasonData = r.value;
+                        var seasonNum = seasonData.season_number || (si + 1);
+                        for (var e = 0; e < seasonData.episodes.length; e++) {
+                            var ep = seasonData.episodes[e];
+                            var epNum = ep.episode_number || (e + 1);
+                            episodes.push(new Episode({
+                                name: "S" + pad(seasonNum) + "E" + pad(epNum) + " - " + (ep.name || ""),
+                                url: JSON.stringify({
+                                    tmdbId: tmdbId,
+                                    mediaType: "tv",
+                                    seasonNumber: seasonNum,
+                                    episodeNumber: epNum,
+                                    title: title,
+                                    episodeTitle: ep.name || "",
+                                    stillPath: ep.still_path
+                                }),
+                                season: seasonNum,
+                                episode: epNum,
+                                rating: ep.vote_average ? Number(Number(ep.vote_average).toFixed(1)) : undefined,
+                                runtime: ep.runtime || undefined,
+                                airDate: ep.air_date || undefined,
+                                posterUrl: ep.still_path ? still(ep.still_path) : poster(posterPath)
+                            }));
                         }
-                    } catch (seasonErr) {
-                        console.warn("[TMDB] Season " + seasonNum + " failed");
                     }
                 }
 
