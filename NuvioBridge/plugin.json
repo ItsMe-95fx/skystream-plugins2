@@ -1,11 +1,11 @@
 {
-  "packageName": "dev.nuviohub.ultimate",
-  "name": "Nuvio Hub Ultimate",
+  "packageName": "com.cookie.NuvioBridge",
+  "name": "NuvioBridge",
   "version": 1,
   "baseUrl": "https://skystream-local",
   "description": "Ultimate Nuvio-Only plugin: 150+ streaming providers, TMDB catalog discovery, multilingual subtitle support. Zero Stremio addon dependencies — pure Nuvio power.",
-  "authors": ["NuvioHub"],
-  "languages": ["en", "hi", "ta", "te", "ml", "kn", "bn", "mr", "gu", "pa", "ur", "ar", "fr", "es", "pt", "ja", "ko", "zh", "de", "it", "pl", "tr", "th", "vi", "ru", "nl", "ro", "el"],
+  "authors": ["Cookie\ud83c\udf6a"],
+  "languages": ["en", "hi", "ta", "te", "ml"],
   "categories": ["Movie", "TvSeries", "Anime"],
   "nuvioManifests": [
     "https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
