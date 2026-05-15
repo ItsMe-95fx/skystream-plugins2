@@ -1,1385 +1,1164 @@
 (function() {
-    // ============================================================
-    // TMDB + STREMIO HYBRID PLUGIN v1
-    //   getHome / search / load → TMDB Catalog (unchanged)
-    //   loadStreams             → Stremio Addon Aggregator + Torrentio Fallback
-    //   Stream Formatter        → Template-driven name + description
-    // ============================================================
-
     "use strict";
 
-    // ── TMDB Configuration ──────────────────────────────────────
-    // Multiple keys to avoid rate limiting — edit these if they get stale
-    const TMDB_KEYS = [
-        "1865f43a0549ca50d341dd9ab8b29f49",
-        "e554b5c1ac8837b4e6c6b7c9b7e4e8a0",
-        "68e094699525b18a70bab2f86b1fa706",
-        "98ae14df2b8d8f8f8136499daf79f0e0",
-        "1f0f6e6f8e7b8c9d0e1f2a3b4c5d6e7f",
-        "8f0f7e6d5c4b3a29180f1e2d3c4b5a67",
-        "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
-    ];
-    var _keyIndex = 0;
-    function nextKey() {
-        var k = TMDB_KEYS[_keyIndex % TMDB_KEYS.length];
-        _keyIndex++;
-        return k;
+    // ================================================================
+    //  Stremio Hub v3 — All features + max links
+    //
+    //  v2: http_parallel, persistent cache, parallel everything
+    //  v3 additions:
+    //  - parse_html native parsing (no regex for HTML extraction)
+    //  - Subtitle matching via videoHash/videoSize
+    //  - Stream quality sorting (4K > 1080p > 720p > 480p > CAM)
+    //  - MAGIC_PROXY_v1 for header-restricted streams
+    //  - Pre-fetching loadStreams on load() call
+    //  - Rate limit backoff per addon URL
+    //  - Delayed-addon support (60s timeout, two-phase fetch)
+    // ================================================================
+
+    var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+    var JSON_HEADERS = { "User-Agent": UA, "Accept": "application/json", "Accept-Language": "en-US,en;q=0.5" };
+    var CACHE_TTL = 600000;
+    var _cache = {};
+
+    // ── Rate limit backoff tracking ───────────────────────────────
+    // Per-URL: { fails: number, until: timestamp }
+    var _rateLimits = {};
+    var RATE_BACKOFF_MS = 300000; // 5 min backoff after 429/503
+    var RATE_MAX_FAILS = 3; // skip after 3 consecutive failures
+
+    function isRateLimited(url) {
+        var rl = _rateLimits[url];
+        return rl && rl.fails >= RATE_MAX_FAILS && Date.now() < rl.until;
     }
 
-    // Multiple API endpoints for DNS rotation (speed & reliability)
-    const TMDB_ENDPOINTS = [
-        "https://api.themoviedb.org/3",
-        "https://api.tmdb.org/3",
-        "https://api.themoviedb.org/3"
-    ];
-
-    const IMG_URL = "https://image.tmdb.org/t/p";
-    const POSTER = "w342";     // Medium quality for posters
-    const BACKDROP = "w780";   // Medium quality for backgrounds
-    const PROFILE = "w185";    // Medium quality for cast photos
-    const STILL = "w300";      // Medium quality for episode stills
-    const ANIME_GENRE = 16;
-
-    const MAX_PAGES = 2;         // Reduced for speed (was 5)
-    const MAX_ITEMS = 100;
-    const TMDB_CACHE_TTL = 300000; // 5 min cache for TMDB responses
-
-    // Multi User-Agent rotation (avoids throttling)
-    const USER_AGENTS = [
-        // Windows Chrome
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        // Windows Firefox
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-        // Windows Edge
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
-        // Mac Chrome
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        // Mac Safari
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-        // Linux Chrome
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        // Linux Firefox
-        "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0",
-        "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
-        // iPhone Safari
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/537.36",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/537.36",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/537.36",
-        // Android Chrome
-        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
-        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
-        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
-        // Android Firefox
-        "Mozilla/5.0 (Android 14; Mobile; rv:127.0) Gecko/127.0 Firefox/127.0",
-        // iPad Safari
-        "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-    ];
-
-    var _uaIndex = 0;
-    var _epIndex = 0;
-
-    function nextUA() {
-        var ua = USER_AGENTS[_uaIndex % USER_AGENTS.length];
-        _uaIndex++;
-        return ua;
-    }
-
-    function nextEndpoint() {
-        var ep = TMDB_ENDPOINTS[_epIndex % TMDB_ENDPOINTS.length];
-        _epIndex++;
-        return ep;
-    }
-
-    // ── TMDB Helpers ────────────────────────────────────────────
-    function img(p, s) { return p ? IMG_URL + "/" + s + p : ""; }
-    function poster(p) { return img(p, POSTER); }
-    function backdrop(p) { return img(p, BACKDROP); }
-    function profile(p) { return img(p, PROFILE); }
-    function still(p) { return img(p, STILL); }
-
-    function safeJson(t, f) {
-        try { return JSON.parse(String(t || "{}")); } catch (e) { return f || null; }
-    }
-
-    function yr(d) {
-        if (!d) return undefined;
-        var y = parseInt(String(d).slice(0, 4), 10);
-        return y > 0 ? y : undefined;
-    }
-
-    function pad(n) { return n < 10 ? "0" + n : String(n); }
-
-    // ── TMDB Fetch with Cache + Retry + User-Agent + DNS Rotation ──
-    var tmdbResponseCache = {};
-    async function tmdb(path, params) {
-        params = params || {};
-
-        // Build cache key from path + params
-        var cacheKey = path + "|" + JSON.stringify(params);
-        var cached = tmdbResponseCache[cacheKey];
-        if (cached && (Date.now() - cached.ts) < TMDB_CACHE_TTL) {
-            return cached.data;
-        }
-
-        var maxRetries = 2; // reduced from 3 for speed
-        var lastError = null;
-
-        for (var attempt = 0; attempt < maxRetries; attempt++) {
-            var endpoint = nextEndpoint();
-            var ua = nextUA();
-
-            var q = "api_key=" + nextKey();
-            for (var k in params) {
-                if (params.hasOwnProperty(k) && params[k] !== undefined && params[k] !== null) {
-                    q += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(String(params[k]));
-                }
-            }
-
-            var headers = {
-                "User-Agent": ua,
-                "Accept": "application/json",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Referer": "https://www.themoviedb.org/"
-            };
-
-            try {
-                var url = endpoint + path + "?" + q;
-                var res = await http_get(url, headers);
-                if (res && res.status === 200 && res.body) {
-                    var parsed = safeJson(res.body, null);
-                    if (parsed) {
-                        tmdbResponseCache[cacheKey] = { ts: Date.now(), data: parsed };
-                        return parsed;
-                    }
-                }
-                lastError = "Status: " + (res ? res.status : "no response");
-            } catch (e) {
-                lastError = e.message || e;
-                console.warn("[TMDB] Attempt " + (attempt + 1) + " failed: " + lastError);
-            }
-
-            if (attempt < maxRetries - 1) {
-                await sleep(300 * (attempt + 1));
+    function recordRateLimit(url, status) {
+        if (status === 429 || status === 503 || status === 502 || status === 504) {
+            var rl = _rateLimits[url] || { fails: 0, until: 0 };
+            rl.fails++;
+            rl.until = Date.now() + RATE_BACKOFF_MS;
+            _rateLimits[url] = rl;
+            try { setPreference("hub_ratelimit:" + url, JSON.stringify(rl)); } catch (e) {}
+        } else if (status >= 200 && status < 300) {
+            // Success — reset counter
+            if (_rateLimits[url]) {
+                _rateLimits[url].fails = 0;
+                try { setPreference("hub_ratelimit:" + url, JSON.stringify(_rateLimits[url])); } catch (e) {}
             }
         }
+    }
 
-        // Last resort: try another key
+    function loadRateLimits() {
         try {
-            var fallbackUrl = TMDB_ENDPOINTS[0] + path + "?api_key=" + nextKey();
-            var qIdx = path.indexOf("?");
-            if (qIdx === -1) {
-                for (var k2 in params) {
-                    if (params.hasOwnProperty(k2) && params[k2] !== undefined && params[k2] !== null) {
-                        fallbackUrl += "&" + encodeURIComponent(k2) + "=" + encodeURIComponent(String(params[k2]));
-                    }
-                }
+            var keys = ["hub_ratelimit:"];
+            // We can't enumerate preferences, so we rely on in-memory + per-call persistence
+            // Rate limits are stored per-URL and loaded on demand in isRateLimited
+        } catch (e) {}
+    }
+
+    // ── Content type mapping ───────────────────────────────────────
+    function skyType(t) { return (t === "movie" || t === "short") ? "movie" : "series"; }
+
+    // ── URL helpers ───────────────────────────────────────────────
+    function baseUrl(m) { return (m || "").replace(/\/manifest\.json$/, "").replace(/\/$/, ""); }
+
+    function addonName(url) {
+        try {
+            var h = url.replace(/https?:\/\//, "").split("/")[0].replace(/^www\./, "");
+            var p = h.split(".");
+            if (p.length >= 2) {
+                var tlds = ["com","org","net","io","app","dev","tv","co","uk","de","xyz","fun","cloud","me"];
+                var b = p[0]; if (tlds.indexOf(b) !== -1 && p.length > 1) b = p[1];
+                return b.charAt(0).toUpperCase() + b.slice(1);
             }
-            var res2 = await http_get(fallbackUrl, {
-                "User-Agent": nextUA(),
-                "Accept": "application/json"
-            });
-            if (res2 && res2.status === 200 && res2.body) {
-                var parsed2 = safeJson(res2.body, null);
-                if (parsed2) {
-                    tmdbResponseCache[cacheKey] = { ts: Date.now(), data: parsed2 };
-                    return parsed2;
+            return p[0].charAt(0).toUpperCase() + p[0].slice(1);
+        } catch (e) { return "Addon"; }
+    }
+
+    function isHttp(s) { return s && (s.indexOf("http://") === 0 || s.indexOf("https://") === 0); }
+    function str(s) { return String(s == null ? "" : s); }
+    function safeJson(t, f) { try { return JSON.parse(str(t)); } catch (e) { return f || null; } }
+
+    // ── Persistent Cache ──────────────────────────────────────────
+    function pCacheGet(k) {
+        var c = _cache[k];
+        if (c && (Date.now() - c.ts) < CACHE_TTL) return c.data;
+        try {
+            var raw = getPreference("hub_cache:" + k);
+            if (raw) {
+                var parsed = safeJson(raw, null);
+                if (parsed && parsed.ts && (Date.now() - parsed.ts) < CACHE_TTL) {
+                    _cache[k] = parsed;
+                    return parsed.data;
                 }
             }
         } catch (e) {}
-
-        // Cache null result briefly to avoid retry storms
-        tmdbResponseCache[cacheKey] = { ts: Date.now(), data: null };
         return null;
     }
 
-    function sleep(ms) {
-        return new Promise(function(resolve) {
-            setTimeout(resolve, ms);
+    function pCacheSet(k, d) {
+        var entry = { ts: Date.now(), data: d };
+        _cache[k] = entry;
+        try { setPreference("hub_cache:" + k, JSON.stringify(entry)); } catch (e) {}
+    }
+
+    // ── HTTP via http_parallel ────────────────────────────────────
+    function httpReq(url) {
+        return { method: "GET", url: url, headers: JSON_HEADERS };
+    }
+
+    function httpBatch(urls) {
+        if (!urls.length) return Promise.resolve([]);
+        // Filter out rate-limited URLs but keep their indices for alignment
+        var activeUrls = [];
+        var activeIndices = [];
+        for (var i = 0; i < urls.length; i++) {
+            if (!isRateLimited(urls[i])) {
+                activeUrls.push(urls[i]);
+                activeIndices.push(i);
+            }
+        }
+        if (!activeUrls.length) {
+            return Promise.resolve(urls.map(function(u) { return { url: u, ok: false, data: null, status: 429 }; }));
+        }
+        var reqs = [];
+        for (var i = 0; i < activeUrls.length; i++) {
+            reqs.push(httpReq(activeUrls[i]));
+        }
+        return http_parallel(reqs).then(function(responses) {
+            var results = urls.map(function(u) { return { url: u, ok: false, data: null, status: 0 }; });
+            for (var i = 0; i < responses.length; i++) {
+                var r = responses[i];
+                var idx = activeIndices[i];
+                var entry = { url: activeUrls[i], ok: false, data: null, status: r ? (r.status || r.code || 0) : 0 };
+                recordRateLimit(activeUrls[i], entry.status);
+                if (r && r.body && entry.status === 200) {
+                    try {
+                        var b = r.body;
+                        if (typeof b === "string") {
+                            b = b.trim();
+                            if (b && b.charAt(0) !== "<") {
+                                entry.data = JSON.parse(b);
+                                entry.ok = true;
+                            }
+                        } else if (typeof b === "object") {
+                            entry.data = b;
+                            entry.ok = true;
+                        }
+                    } catch (e) {}
+                }
+                results[idx] = entry;
+            }
+            return results;
+        }).catch(function() {
+            return urls.map(function(u) { return { url: u, ok: false, data: null, status: 0 }; });
         });
     }
 
-    // ── Multi-page fetch ────────────────────────────────────────
-    async function fetchPages(endpoint, params, mediaType, maxItems) {
-        maxItems = maxItems || MAX_ITEMS;
-        var page = params.page || 1;
-        var all = [];
-        var data = await tmdb(endpoint, Object.assign({}, params, { page: page }));
-        if (data && data.results) all = data.results;
-        return all.slice(0, maxItems).map(function(r) {
-            return toItem(r, { mediaType: mediaType || r.media_type || "movie" });
-        });
-    }
-
-    // ── Multi-page + post-filter ────────────────────────────────
-    async function fetchFiltered(endpoint, params, filterFn, mediaType, maxItems) {
-        maxItems = maxItems || 40;
-        var page = params.page || 1;
-        var all = [];
-        // Fetch up to 2 pages for filtered results (more chances to find matches)
-        for (var p = page; p <= page + 1 && all.length < maxItems; p++) {
-            var data = await tmdb(endpoint, Object.assign({}, params, { page: p }));
-            if (!data || !data.results || data.results.length === 0) break;
-            for (var i = 0; i < data.results.length && all.length < maxItems; i++) {
-                if (filterFn(data.results[i])) {
-                    all.push(data.results[i]);
+    // Single fetch via http_get (for redirects)
+    function fetchJson(url) {
+        return http_get(url, JSON_HEADERS).then(function(r) {
+            if (!r || !r.body) throw new Error("Empty response");
+            recordRateLimit(url, r.status || 0);
+            if (r.status >= 300 && r.status < 400) {
+                var loc = r.location || (r.headers && (r.headers.location || r.headers.Location));
+                if (typeof r.body === 'string' && r.body.indexOf('Redirecting') !== -1) {
+                    var m = r.body.match(/https?:\/\/[^\s"']+/);
+                    if (m) loc = m[0];
+                }
+                if (loc) {
+                    var redirectUrl = typeof loc === 'string' ? loc : (loc.url || '');
+                    if (redirectUrl.indexOf('http') !== 0) {
+                        try { var u = new URL(url); redirectUrl = u.origin + redirectUrl; } catch(e) {}
+                    }
+                    return fetchJson(redirectUrl);
                 }
             }
-        }
-        return all.slice(0, maxItems).map(function(r) {
-            return toItem(r, { mediaType: mediaType || "tv" });
-        });
-    }
-
-    // ── Convert TMDB item to MultimediaItem ─────────────────────
-    function toItem(item, opts) {
-        opts = opts || {};
-        var mt = opts.mediaType || item.media_type || "movie";
-        var isTv = (mt === "tv");
-        var title = item.title || item.name || item.original_title || item.original_name || "Unknown";
-        var year = yr(item.release_date || item.first_air_date);
-        var score = item.vote_average ? Number(Number(item.vote_average).toFixed(1)) : undefined;
-
-        var meta = JSON.stringify({
-            tmdbId: item.id,
-            mediaType: mt,
-            title: title,
-            year: year,
-            posterPath: item.poster_path,
-            backdropPath: item.backdrop_path
-        });
-
-        return new MultimediaItem({
-            title: title,
-            url: meta,
-            posterUrl: poster(item.poster_path),
-            type: isTv ? "series" : "movie",
-            year: year,
-            score: score
-        });
-    }
-
-    // ── Filter Functions ────────────────────────────────────────
-    function isAnime(item) {
-        if (!item.genre_ids || item.genre_ids.indexOf(ANIME_GENRE) === -1) return false;
-        if (item.original_language === "ja") return true;
-        if (item.origin_country && item.origin_country.indexOf("JP") !== -1) return true;
-        return false;
-    }
-
-    function isWesternAnim(item) {
-        if (!item.genre_ids || item.genre_ids.indexOf(ANIME_GENRE) === -1) return false;
-        if (item.original_language === "ja") return false;
-        if (item.origin_country && item.origin_country.indexOf("JP") !== -1) return false;
-        return true;
-    }
-
-    function isKDrama(item) {
-        return item.origin_country && item.origin_country.indexOf("KR") !== -1;
-    }
-
-    // ── Discover helpers ────────────────────────────────────────
-    async function discoverTv(extra, maxItems) {
-        maxItems = maxItems || MAX_ITEMS;
-        var page = extra.page || 1;
-        var all = [];
-        for (var p = page; p <= page + 1; p++) {
-            var data = await tmdb("/discover/tv", Object.assign({
-                language: "en-US",
-                sort_by: "popularity.desc",
-                "vote_count.gte": 10
-            }, extra, { page: p }));
-            if (data && data.results) all = all.concat(data.results);
-            if (all.length >= maxItems) break;
-        }
-        return all.slice(0, maxItems).map(function(r) { return toItem(r, { mediaType: "tv" }); });
-    }
-
-    async function discoverMovie(extra, maxItems) {
-        maxItems = maxItems || MAX_ITEMS;
-        var page = extra.page || 1;
-        var all = [];
-        var data = await tmdb("/discover/movie", Object.assign({
-            language: "en-US",
-            sort_by: "popularity.desc",
-            "vote_count.gte": 10
-        }, extra, { page: page }));
-        if (data && data.results) all = data.results;
-        return all.slice(0, maxItems).map(function(r) { return toItem(r, { mediaType: "movie" }); });
-    }
-
-    // ── Fetch a single page from TMDB and convert to items ──
-    async function fetchPage(endpoint, params, mediaType, page) {
-        try {
-            page = page || 1;
-            var all = [];
-            // Fetch 2 pages for more posters
-            for (var p = page; p <= page + 1; p++) {
-                var data = await tmdb(endpoint, Object.assign({}, params || {}, { page: p }));
-                if (data && data.results) all = all.concat(data.results);
-                if (all.length >= 40) break;
+            if (r.status !== 200 && r.status !== 304) throw new Error("HTTP " + r.status);
+            var b = r.body;
+            if (typeof b === "string") {
+                b = b.trim();
+                if (!b) throw new Error("Empty body");
+                if (b.charAt(0) === "<") throw new Error("HTML");
+                return JSON.parse(b);
             }
-            return all.slice(0, 40).map(function(r) {
-                return toItem(r, { mediaType: mediaType || r.media_type || "movie" });
-            });
-        } catch (e) {}
+            return b;
+        });
+    }
+
+    // ── Native parse_html wrapper ─────────────────────────────────
+    // Uses SkyStream's parse_html(html, selector, attr) instead of regex
+    // Returns array of { text, html, attr } or null if parse_html unavailable
+    function nativeParseHtml(html, selector, attr) {
+        if (typeof parse_html !== "function") return null;
+        try {
+            return parse_html(html, selector, attr || "textContent");
+        } catch (e) { return null; }
+    }
+
+    // ── Manifest fetcher with persistent cache ─────────────────────
+    function getManifest(url) {
+        var k = "mf:" + url;
+        var cached = pCacheGet(k);
+        if (cached) return Promise.resolve(cached);
+        if (isRateLimited(url)) return Promise.resolve(null);
+        var p = fetchJson(url);
+        var t = new Promise(function(r) { setTimeout(function() { r(null); }, 8000); });
+        return Promise.race([p, t]).then(function(d) {
+            if (d) pCacheSet(k, d);
+            return d;
+        });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  ADDON ACCESSORS
+    // ════════════════════════════════════════════════════════════════
+
+    function getCatalogueAddons() {
+        try { if (manifest && Array.isArray(manifest.catalogueAddons)) return manifest.catalogueAddons; } catch (e) {}
+        return [];
+    }
+    function getStreamingAddons() {
+        try { if (manifest && Array.isArray(manifest.streamingAddons)) return manifest.streamingAddons; } catch (e) {}
+        return [];
+    }
+    function getSubtitlesAddons() {
+        try { if (manifest && Array.isArray(manifest.subtitlesAddons)) return manifest.subtitlesAddons; } catch (e) {}
         return [];
     }
 
-    // ── Fetch global + Indian new releases and merge ──
-    async function fetchNewReleases(page) {
-        page = page || 1;
-        var items = [];
-        // US new releases (theaters/streaming)
+    // ════════════════════════════════════════════════════════════════
+    //  META PREVIEW → SkyStream MultimediaItem
+    // ════════════════════════════════════════════════════════════════
+
+    function parseYear(meta) {
+        if (!meta) return undefined;
+        if (meta.year != null) { var y = parseInt(meta.year, 10); if (y > 1900 && y < 2100) return y; }
+        if (meta.releaseInfo) {
+            var parts = str(meta.releaseInfo).split(/[–-]/).shift().trim();
+            var y = parseInt(parts, 10);
+            if (y > 1900 && y < 2100) return y;
+        }
+        return undefined;
+    }
+    function parseRating(meta) {
+        if (meta.imdbRating != null) { var r = parseFloat(meta.imdbRating); if (!isNaN(r) && r >= 0 && r <= 10) return r; }
+        if (meta.score != null) { var r = parseFloat(meta.score); if (!isNaN(r) && r >= 0 && r <= 10) return r; }
+        return undefined;
+    }
+    function parseGenres(meta) { var g = meta.genres || meta.genre || meta.tags; return (Array.isArray(g) && g.length) ? g : undefined; }
+
+    function toItem(m, fallbackType) {
         try {
-            var us = await tmdb("/movie/now_playing", { language: "en-US", region: "US", page: page });
-            if (us && us.results) items = items.concat(us.results);
-        } catch (e) {}
-        // Indian new releases (Bollywood/Tollywood/Kollywood) — English titles
-        try {
-            var ind = await tmdb("/movie/now_playing", { language: "en-US", region: "IN", page: page });
-            if (ind && ind.results) items = items.concat(ind.results);
-        } catch (e) {}
-        // Deduplicate by id
-        var seen = {};
-        items = items.filter(function(i) { if (seen[i.id]) return false; seen[i.id] = true; return true; });
-        return items.slice(0, 40).map(function(r) { return toItem(r, { mediaType: "movie" }); });
+            if (!m || !m.id) return null;
+            return new MultimediaItem({
+                title: m.name || m.title || m.originalName || "Unknown",
+                url: m.id || "",
+                posterUrl: m.poster || m.posterUrl || m.thumbnail || "",
+                bannerUrl: m.background || m.backdrop || m.banner || m.bannerUrl || "",
+                logoUrl: m.logo || m.logoUrl || "",
+                type: skyType(m.type || fallbackType || "movie"),
+                description: str(m.description || m.overview || m.synopsis || "").replace(/<[^>]*>/g, "").trim().substring(0, 500),
+                year: parseYear(m),
+                score: parseRating(m),
+                genres: parseGenres(m)
+            });
+        } catch (e) { return null; }
     }
 
-    // ── Fetch popular this month (trending this week, mixed movie+series) ──
-    async function fetchPopularThisMonth(page) {
-        page = page || 1;
-        var items = [];
-        try {
-            var movies = await tmdb("/trending/movie/week", { language: "en-US", page: page });
-            if (movies && movies.results) items = items.concat(movies.results.map(function(r) { return toItem(r, { mediaType: "movie" }); }));
-        } catch (e) {}
-        try {
-            var series = await tmdb("/trending/tv/week", { language: "en-US", page: page });
-            if (series && series.results) items = items.concat(series.results.map(function(r) { return toItem(r, { mediaType: "tv" }); }));
-        } catch (e) {}
-        return items;
-    }
+    // ════════════════════════════════════════════════════════════════
+    //  getHome
+    // ════════════════════════════════════════════════════════════════
 
-    // ============================================================
-    //  getHome — paginated, each category returns 20 items per page
-    // ============================================================
     async function getHome(cb, page) {
-        var HOME_DEADLINE = 45000;
-        var pageNum = parseInt(page) || 1;
         try {
-            var cats = [
-                "Trending Now", "New Releases", "Currently Airing",
-                "Popular This Month", "Popular Movies", "Popular Series",
-                "Top Rated Movies", "Top Rated Series",
-                "Trending Anime", "Trending Animation"
-            ];
-            var fetches = {
-                "Trending Now": fetchPage("/trending/all/day", { language: "en-US" }, null, pageNum),
-                "New Releases": fetchNewReleases(pageNum),
-                "Currently Airing": fetchPage("/tv/on_the_air", { language: "en-US" }, "tv", pageNum),
-                "Popular This Month": fetchPopularThisMonth(pageNum),
-                "Popular Movies": fetchPage("/movie/popular", { language: "en-US" }, "movie", pageNum),
-                "Popular Series": fetchPage("/tv/popular", { language: "en-US" }, "tv", pageNum),
-                "Top Rated Movies": fetchPage("/movie/top_rated", { language: "en-US" }, "movie", pageNum),
-                "Top Rated Series": fetchPage("/tv/top_rated", { language: "en-US" }, "tv", pageNum),
-                "Trending Anime": discoverTv({ with_genres: "16", with_original_language: "ja", sort_by: "popularity.desc", page: pageNum }, 40),
-                "Trending Animation": discoverTv({ with_genres: "16", with_original_language: "en", sort_by: "popularity.desc", page: pageNum }, 40)
-            };
+            var pn = parseInt(page) || 1;
+            var urls = getCatalogueAddons();
+            if (!urls.length) return cb({ success: false, errorCode: "NO_ADDONS", message: "No catalogueAddons" });
 
-            var deadlineTimer = null;
-            var values = Object.keys(fetches).map(function(k) { return fetches[k]; });
-            var deadlineP = new Promise(function(resolve) { deadlineTimer = setTimeout(resolve, HOME_DEADLINE); });
-            var settled = await Promise.race([Promise.allSettled(values), deadlineP]);
-            clearTimeout(deadlineTimer);
+            var results = { data: {}, order: [] };
 
-            // If deadline won, settled is undefined — wait for actual results with a short delay
-            if (!settled || !Array.isArray(settled)) {
-                settled = await Promise.allSettled(values);
-            }
-
-            // Build response in FIXED order — never jumps
-            var clean = {};
-            for (var ci = 0; ci < cats.length; ci++) {
-                var name = cats[ci];
-                var idx = Object.keys(fetches).indexOf(name);
-                var r = settled[idx];
-                if (r && r.status === "fulfilled" && r.value && r.value.length > 0) {
-                    clean[name] = r.value;
+            var manifestResults = [];
+            var uncachedUrls = [];
+            var uncachedIndices = [];
+            for (var i = 0; i < urls.length; i++) {
+                var cached = pCacheGet("mf:" + urls[i]);
+                if (cached) {
+                    manifestResults[i] = cached;
+                } else {
+                    uncachedUrls.push(urls[i]);
+                    uncachedIndices.push(i);
                 }
             }
 
-            if (Object.keys(clean).length === 0) {
-                cb({ success: false, errorCode: "NO_DATA", message: "No data received within deadline" });
-            } else {
-                cb({ success: true, data: clean, page: pageNum });
-            }
-        } catch (e) {
-            console.error("[TMDB] getHome:", e.message || e);
-            cb({ success: false, errorCode: "HOME_ERROR", message: e.message || "Error" });
-        }
-    }
-
-    // ============================================================
-    //  search — UNCHANGED from tmdb-catalog
-    // ============================================================
-    async function search(query, cb) {
-        try {
-            if (!query || String(query).trim().length === 0) {
-                return cb({ success: true, data: [] });
-            }
-            var data = await tmdb("/search/multi", {
-                query: String(query).trim(),
-                language: "en-US"
-            });
-            if (!data || !data.results) return cb({ success: true, data: [] });
-
-            var results = [];
-            for (var i = 0; i < data.results.length && results.length < 50; i++) {
-                var item = data.results[i];
-                if (item.media_type === "movie") {
-                    results.push(toItem(item, { mediaType: "movie" }));
-                } else if (item.media_type === "tv") {
-                    results.push(toItem(item, { mediaType: "tv" }));
-                } else if (item.media_type === "person") {
-                    var known = item.known_for || [];
-                    for (var k = 0; k < known.length && results.length < 50; k++) {
-                        var kf = known[k];
-                        if (kf.media_type === "movie" || kf.media_type === "tv") {
-                            results.push(toItem(kf, { mediaType: kf.media_type }));
-                        }
+            if (uncachedUrls.length) {
+                var mfBatch = await httpBatch(uncachedUrls);
+                for (var j = 0; j < mfBatch.length; j++) {
+                    var idx = uncachedIndices[j];
+                    if (mfBatch[j].ok && mfBatch[j].data) {
+                        manifestResults[idx] = mfBatch[j].data;
+                        pCacheSet("mf:" + uncachedUrls[j], mfBatch[j].data);
                     }
                 }
             }
 
-            var seen = {}, deduped = [];
-            for (i = 0; i < results.length; i++) {
-                if (!seen[results[i].url]) {
-                    seen[results[i].url] = true;
-                    deduped.push(results[i]);
-                }
-            }
+            var catalogUrls = [];
+            for (var ai = 0; ai < urls.length; ai++) {
+                var mf = manifestResults[ai];
+                if (!mf || !Array.isArray(mf.catalogs) || !mf.catalogs.length) continue;
+                var bu = baseUrl(urls[ai]);
+                var an = addonName(urls[ai]);
+                for (var ci = 0; ci < mf.catalogs.length; ci++) {
+                    var cat = mf.catalogs[ci];
+                    if (!cat || !cat.id || !cat.type) continue;
+                    var extras = cat.extra || [];
+                    if (extras.some(function(e) { return e && e.name === "search" && e.isRequired === true; })) continue;
 
-            cb({ success: true, data: deduped.slice(0, 50) });
-        } catch (e) {
-            console.error("[TMDB] search:", e.message || e);
-            cb({ success: true, data: [] });
-        }
-    }
+                    var catUrl = bu + "/catalog/" + cat.type + "/" + cat.id + ".json";
+                    if (pn > 1) catUrl += (catUrl.indexOf("?") === -1 ? "?" : "&") + "skip=" + ((pn - 1) * 20);
 
-    // ============================================================
-    //  load — UNCHANGED from tmdb-catalog
-    // ============================================================
-    async function load(url, cb) {
-        try {
-            var meta = safeJson(url, null);
-            if (!meta || !meta.tmdbId) {
-                return cb({ success: false, errorCode: "PARSE_ERROR", message: "Invalid data" });
-            }
-
-            var tmdbId = meta.tmdbId;
-            var mediaType = meta.mediaType || "movie";
-            var isTv = (mediaType === "tv");
-            var route = isTv ? "tv" : "movie";
-
-            var details = await tmdb("/" + route + "/" + tmdbId, {
-                language: "en-US",
-                append_to_response: "credits,videos,external_ids,recommendations,content_ratings"
-            });
-
-            var title = (details ? (details.title || details.name) : null) || meta.title || "Unknown";
-            var year = details ? yr(details.release_date || details.first_air_date) : meta.year;
-            var overview = details ? (details.overview || "") : "";
-            var voteAvg = details ? (details.vote_average ? Number(Number(details.vote_average).toFixed(1)) : undefined) : undefined;
-            var imdbId = details && details.external_ids ? details.external_ids.imdb_id : undefined;
-            var posterPath = details ? details.poster_path : meta.posterPath;
-            var backdropPath = details ? details.backdrop_path : meta.backdropPath;
-
-            var status = details ? String(details.status || "").toLowerCase() : undefined;
-            if (status === "returning series") status = "ongoing";
-
-            // Content rating
-            var contentRating;
-            if (details && details.content_ratings && details.content_ratings.results) {
-                for (var c = 0; c < details.content_ratings.results.length; c++) {
-                    if (details.content_ratings.results[c].iso_3166_1 === "US") {
-                        contentRating = details.content_ratings.results[c].rating;
-                        break;
-                    }
-                }
-            }
-            if (!contentRating && details && details.adult) contentRating = "18+";
-
-            // Cast
-            var cast = [];
-            if (details && details.credits && details.credits.cast) {
-                var cr = details.credits.cast;
-                for (var i = 0; i < cr.length && i < 20; i++) {
-                    if (cr[i].name || cr[i].original_name) {
-                        cast.push(new Actor({
-                            name: cr[i].name || cr[i].original_name || "",
-                            role: cr[i].character || "",
-                            image: cr[i].profile_path ? profile(cr[i].profile_path) : undefined
-                        }));
-                    }
-                }
-            }
-
-            // Trailers
-            var trailers = [];
-            if (details && details.videos && details.videos.results) {
-                var vids = details.videos.results;
-                for (i = 0; i < vids.length && trailers.length < 3; i++) {
-                    if (vids[i].site === "YouTube" && vids[i].type === "Trailer") {
-                        trailers.push(new Trailer({
-                            url: "https://www.youtube.com/watch?v=" + vids[i].key,
-                            name: vids[i].name || "Trailer"
-                        }));
-                    }
-                }
-            }
-
-            // Recommendations
-            var recommendations = [];
-            if (details && details.recommendations && details.recommendations.results) {
-                var recs = details.recommendations.results;
-                for (i = 0; i < recs.length && i < 20; i++) {
-                    recommendations.push(toItem(recs[i], { mediaType: recs[i].media_type || mediaType }));
-                }
-            }
-
-            // ── Episodes ──
-            var episodes = [];
-
-            if (isTv && details) {
-                var seasonList = details.seasons || [];
-                // Fetch all seasons in parallel — 30 takes same time as 8
-                var LOAD_DEADLINE = 15000;
-                var deadlineTimer = null;
-                var seasonTasks = [];
-                var fetched = 0;
-                var maxSeasonsToFetch = 30;
-
-                for (var si = 0; si < seasonList.length && fetched < maxSeasonsToFetch; si++) {
-                    var seasonInfo = seasonList[si];
-                    var seasonNum = seasonInfo.season_number;
-                    if (seasonNum === 0 || !seasonInfo.episode_count || seasonInfo.episode_count === 0) continue;
-                    fetched++;
-                    seasonTasks.push(tmdb("/tv/" + tmdbId + "/season/" + seasonNum, { language: "en-US" }));
-                }
-                var deadlineP = new Promise(function(r) { deadlineTimer = setTimeout(r, LOAD_DEADLINE); });
-                var seasonResults = await Promise.race([Promise.allSettled(seasonTasks), deadlineP]);
-                clearTimeout(deadlineTimer);
-
-                if (seasonResults && Array.isArray(seasonResults)) {
-                    for (var si = 0; si < seasonResults.length; si++) {
-                        var r = seasonResults[si];
-                        if (r.status !== "fulfilled" || !r.value || !r.value.episodes) continue;
-                        var seasonData = r.value;
-                        var seasonNum = seasonData.season_number || (si + 1);
-                        for (var e = 0; e < seasonData.episodes.length; e++) {
-                            var ep = seasonData.episodes[e];
-                            var epNum = ep.episode_number || (e + 1);
-                            episodes.push(new Episode({
-                                name: "S" + pad(seasonNum) + "E" + pad(epNum) + " - " + (ep.name || ""),
-                                url: JSON.stringify({
-                                    tmdbId: tmdbId,
-                                    mediaType: "tv",
-                                    seasonNumber: seasonNum,
-                                    episodeNumber: epNum,
-                                    title: title,
-                                    episodeTitle: ep.name || "",
-                                    stillPath: ep.still_path,
-                                    imdbId: imdbId
-                                }),
-                                season: seasonNum,
-                                episode: epNum,
-                                rating: ep.vote_average ? Number(Number(ep.vote_average).toFixed(1)) : undefined,
-                                runtime: ep.runtime || undefined,
-                                airDate: ep.air_date || undefined,
-                                posterUrl: ep.still_path ? still(ep.still_path) : poster(posterPath)
-                            }));
-                        }
-                    }
-                }
-
-                var nextAiring;
-                if (details.next_episode_to_air && details.next_episode_to_air.air_date) {
-                    nextAiring = new NextAiring({
-                        episode: details.next_episode_to_air.episode_number || 0,
-                        season: details.next_episode_to_air.season_number || 1,
-                        unixTime: Math.floor(new Date(details.next_episode_to_air.air_date).getTime() / 1000)
+                    catalogUrls.push({
+                        url: catUrl, addonIdx: ai, addonName: an,
+                        catName: cat.name || cat.id, catType: cat.type, totalAddons: urls.length
                     });
                 }
             }
 
-            if (episodes.length === 0) {
-                episodes.push(new Episode({
-                    name: isTv ? (title + " - Start Watching") : title,
-                    url: JSON.stringify({
-                        tmdbId: tmdbId,
-                        mediaType: mediaType,
-                        title: title,
-                        year: year,
-                        posterPath: posterPath,
-                        imdbId: imdbId
-                    }),
-                    season: 1,
-                    episode: 1,
-                    posterUrl: poster(posterPath)
+            if (!catalogUrls.length) return cb({ success: false, errorCode: "NO_DATA", message: "No catalogs" });
+
+            var catUrls = catalogUrls.map(function(c) { return c.url; });
+            var catResults = await httpBatch(catUrls);
+
+            for (var ri = 0; ri < catResults.length; ri++) {
+                var cr = catResults[ri];
+                var info = catalogUrls[ri];
+                if (!cr.ok || !cr.data || !Array.isArray(cr.data.metas) || !cr.data.metas.length) continue;
+
+                var items = cr.data.metas.map(function(m) { return toItem(m, info.catType); }).filter(Boolean);
+                if (!items.length) continue;
+
+                var catLabel = (info.totalAddons > 1) ? (info.addonName + " - " + info.catName) : info.catName;
+                if (!results.data[catLabel]) {
+                    results.data[catLabel] = items;
+                    results.order.push(catLabel);
+                }
+            }
+
+            if (!Object.keys(results.data).length) return cb({ success: false, errorCode: "NO_DATA", message: "No catalog data" });
+            var out = {};
+            for (var i = 0; i < results.order.length; i++) { if (results.data[results.order[i]]) out[results.order[i]] = results.data[results.order[i]]; }
+            cb({ success: true, data: out, page: pn });
+        } catch (e) {
+            console.error("[Hub] getHome:", e.message || e);
+            cb({ success: false, errorCode: "HOME_ERROR", message: e.message || "Error" });
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  search
+    // ════════════════════════════════════════════════════════════════
+
+    async function search(query, cb) {
+        try {
+            var q = str(query).trim().toLowerCase();
+            if (!q) return cb({ success: true, data: [] });
+
+            var urls = getCatalogueAddons();
+            if (!urls.length) return cb({ success: true, data: [] });
+
+            var all = [];
+            var seen = {};
+            function addItem(item) { if (item && item.url && !seen[item.url]) { seen[item.url] = true; all.push(item); } }
+
+            var manifests = [];
+            var uncachedUrls = [], uncachedIdx = [];
+            for (var i = 0; i < urls.length; i++) {
+                var c = pCacheGet("mf:" + urls[i]);
+                if (c) { manifests[i] = c; }
+                else { uncachedUrls.push(urls[i]); uncachedIdx.push(i); }
+            }
+            if (uncachedUrls.length) {
+                var mfRes = await httpBatch(uncachedUrls);
+                for (var j = 0; j < mfRes.length; j++) {
+                    if (mfRes[j].ok && mfRes[j].data) {
+                        manifests[uncachedIdx[j]] = mfRes[j].data;
+                        pCacheSet("mf:" + uncachedUrls[j], mfRes[j].data);
+                    }
+                }
+            }
+
+            var searchUrls = [];
+            for (var ai = 0; ai < urls.length; ai++) {
+                var mf = manifests[ai];
+                if (!mf || !Array.isArray(mf.catalogs) || !mf.catalogs.length) continue;
+                var bu = baseUrl(urls[ai]);
+
+                var searchCats = [], browseCats = [];
+                for (var ci = 0; ci < mf.catalogs.length; ci++) {
+                    var cat = mf.catalogs[ci];
+                    if (!cat || !cat.id || !cat.type) continue;
+                    var extras = cat.extra || [];
+                    if (extras.some(function(e) { return e && e.name === "search"; })) searchCats.push(cat);
+                    else if (browseCats.length < 5) browseCats.push(cat);
+                }
+
+                for (var si = 0; si < searchCats.length; si++) {
+                    searchUrls.push({
+                        url: bu + "/catalog/" + searchCats[si].type + "/" + searchCats[si].id + "/search=" + encodeURIComponent(query) + ".json",
+                        catType: searchCats[si].type, isSearch: true
+                    });
+                }
+                for (var bi = 0; bi < browseCats.length; bi++) {
+                    searchUrls.push({
+                        url: bu + "/catalog/" + browseCats[bi].type + "/" + browseCats[bi].id + ".json",
+                        catType: browseCats[bi].type, isSearch: false
+                    });
+                }
+            }
+
+            if (!searchUrls.length) return cb({ success: true, data: [] });
+
+            var sUrls = searchUrls.map(function(s) { return s.url; });
+            var sResults = await httpBatch(sUrls);
+
+            var foundSearch = false;
+            for (var ri = 0; ri < sResults.length && all.length < 50; ri++) {
+                var sr = sResults[ri];
+                var info = searchUrls[ri];
+                if (!sr.ok || !sr.data) continue;
+                if (info.isSearch) {
+                    if (Array.isArray(sr.data.metas) && sr.data.metas.length) {
+                        foundSearch = true;
+                        for (var mi = 0; mi < sr.data.metas.length && all.length < 50; mi++) {
+                            addItem(toItem(sr.data.metas[mi], info.catType));
+                        }
+                    }
+                }
+            }
+
+            if (!foundSearch) {
+                for (var ri = 0; ri < sResults.length && all.length < 50; ri++) {
+                    var sr = sResults[ri];
+                    var info = searchUrls[ri];
+                    if (info.isSearch || !sr.ok || !sr.data || !Array.isArray(sr.data.metas)) continue;
+                    for (var mi = 0; mi < sr.data.metas.length && all.length < 50; mi++) {
+                        var m = sr.data.metas[mi];
+                        if (str(m.name || m.title || "").toLowerCase().indexOf(q) !== -1) {
+                            addItem(toItem(m, info.catType));
+                        }
+                    }
+                }
+            }
+
+            cb({ success: true, data: all.slice(0, 50) });
+        } catch (e) {
+            console.error("[Hub] search:", e.message || e);
+            cb({ success: true, data: [] });
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  load — with pre-fetching loadStreams
+    // ════════════════════════════════════════════════════════════════
+
+    function parseVideoId(raw) {
+        if (!raw) return null;
+        var p = safeJson(raw, null);
+        if (p && p.i !== undefined) return { id: str(p.i), type: p.t || "movie", season: p.s || 0, episode: p.e || 0 };
+        if (p && p.tmdbId !== undefined) return { id: str(p.tmdbId), type: p.mediaType || "movie", season: p.seasonNumber || 0, episode: p.episodeNumber || 0 };
+
+        if (raw.indexOf(":") !== -1) {
+            var parts = raw.split(":");
+            var first = parts[0];
+            if (/^tt\d+$/.test(first) && parts.length >= 3) {
+                var sn = parseInt(parts[1], 10);
+                var en = parseInt(parts[2], 10);
+                return { id: first, type: "series", season: isNaN(sn) ? 0 : sn, episode: isNaN(en) ? 0 : en };
+            }
+            if (first.indexOf("_") !== -1 || first.indexOf("-") !== -1) {
+                return { id: raw, type: "series", season: 0, episode: 0 };
+            }
+        }
+        return { id: raw, type: "movie", season: 0, episode: 0 };
+    }
+
+
+    async function load(url, cb) {
+        try {
+            var rawInput = str(url).trim();
+            if (!rawInput) return cb({ success: false, errorCode: "PARSE_ERROR", message: "No ID" });
+
+            var vp = parseVideoId(rawInput);
+            var metaId = vp ? vp.id : rawInput;
+            var knownType = vp ? vp.type : null;
+            if (!metaId) return cb({ success: false, errorCode: "PARSE_ERROR", message: "No ID" });
+
+            var addonUrls = getCatalogueAddons();
+            if (!addonUrls.length) return respondMeta({ name: "Content", id: metaId, type: knownType || "movie" }, metaId, cb);
+
+            var eid = encodeURIComponent(metaId);
+            var tryTypes = knownType ? [knownType, "movie", "series", "anime", "channel", "tv"]
+                                      : ["movie", "series", "anime", "channel", "tv"];
+
+            var metaUrls = [];
+            var metaInfo = [];
+            for (var ai = 0; ai < addonUrls.length; ai++) {
+                var bu = baseUrl(addonUrls[ai]);
+                for (var ti = 0; ti < tryTypes.length; ti++) {
+                    metaUrls.push(bu + "/meta/" + tryTypes[ti] + "/" + eid + ".json");
+                    metaInfo.push({ addonUrl: addonUrls[ai], type: tryTypes[ti] });
+                }
+            }
+
+            var metaResults = await httpBatch(metaUrls);
+
+            var found = null;
+            for (var ri = 0; ri < metaResults.length; ri++) {
+                var mr = metaResults[ri];
+                if (!mr.ok || !mr.data) continue;
+                if (mr.data.meta && mr.data.meta.id) { found = mr.data.meta; break; }
+                if (Array.isArray(mr.data.metas) && mr.data.metas.length && mr.data.metas[0].id) { found = mr.data.metas[0]; break; }
+            }
+
+            if (found) {
+                respondMeta(found, metaId, cb);
+            } else {
+                var isSeries = (knownType === "series" || knownType === "anime" || knownType === "tv" || knownType === "channel");
+                respondMeta({ name: "Content", id: metaId, type: isSeries ? "series" : "movie" }, metaId, cb);
+            }
+
+            // Pre-fetch streams in background — don't block the callback
+            try {
+                loadStreams(rawInput, function() {
+                    // Cache the result so when user taps Play, streams are ready
+                    pCacheSet("streams:" + metaId, arguments[0]);
+                });
+            } catch (e) { /* pre-fetch is best-effort */ }
+        } catch (e) {
+            console.error("[Hub] load:", e.message || e);
+            try { respondMeta({ name: "Unknown", id: rawInput, type: "movie" }, rawInput, cb); } catch (f) {
+                cb({ success: false, errorCode: "LOAD_ERROR", message: e.message || "Error" });
+            }
+        }
+    }
+
+    function respondMeta(meta, metaId, cb) {
+        try {
+            var t = meta.type || "movie";
+            var st = skyType(t);
+            var y = parseYear(meta);
+            var s = parseRating(meta);
+            var desc = str(meta.description || meta.overview || meta.synopsis || "").replace(/<[^>]*>/g, "").trim();
+
+            var eps = [];
+            var isSeries = (st !== "movie");
+
+            if (isSeries && Array.isArray(meta.videos) && meta.videos.length) {
+                for (var vi = 0; vi < meta.videos.length; vi++) {
+                    try {
+                        var v = meta.videos[vi];
+                        if (!v || !v.id) continue;
+                        var sn = v.season || 1;
+                        var en = v.episode || v.number || 1;
+                        var vid = metaId + ":" + sn + ":" + en;
+                        eps.push(new Episode({
+                            name: v.name || v.title || "Episode " + en,
+                            url: vid, season: sn, episode: en,
+                            posterUrl: v.thumbnail || v.poster || meta.poster || "",
+                            description: v.overview || v.description || "",
+                            airDate: v.released || v.firstAired || ""
+                        }));
+                    } catch (e) {}
+                }
+            }
+
+            if (!eps.length) {
+                var vid = isSeries ? (metaId + ":1:1") : metaId;
+                eps.push(new Episode({
+                    name: st === "movie" ? "Full Movie" : "Watch",
+                    url: vid, season: 1, episode: 1,
+                    posterUrl: meta.poster || ""
                 }));
             }
 
-            var item = new MultimediaItem({
-                title: title,
-                url: url,
-                posterUrl: poster(posterPath),
-                bannerUrl: backdrop(backdropPath),
-                logoUrl: imdbId ? "https://live.metahub.space/logo/medium/" + imdbId + "/img" : undefined,
-                description: overview || (details ? "" : "Synopsis not available. Tap play to stream."),
-                type: isTv ? "series" : "movie",
-                year: year,
-                score: voteAvg,
-                status: status,
-                contentRating: contentRating,
+            var cast = undefined;
+            if (Array.isArray(meta.cast) && meta.cast.length) {
+                cast = [];
+                for (var ci = 0; ci < meta.cast.length; ci++) {
+                    try {
+                        var c = meta.cast[ci];
+                        if (!c) continue;
+                        if (typeof c === "string") {
+                            cast.push(new Actor({ name: c, role: "", image: "" }));
+                        } else {
+                            cast.push(new Actor({
+                                name: c.name || c.fullName || c.person || "",
+                                role: c.role || c.character || "",
+                                image: c.image || c.picture || c.photo || c.profile || c.profile_path || ""
+                            }));
+                        }
+                    } catch (e) {}
+                }
+                if (!cast.length) cast = undefined;
+            }
+
+            var trailers = undefined;
+            if (Array.isArray(meta.trailers) && meta.trailers.length) {
+                trailers = [];
+                for (var tri = 0; tri < meta.trailers.length; tri++) {
+                    try {
+                        var tr = meta.trailers[tri];
+                        if (!tr) continue;
+                        var src = tr.source || tr.url || "";
+                        var trUrl = (src.indexOf("http") === 0) ? src : "https://www.youtube.com/watch?v=" + src;
+                        trailers.push(new Trailer({ url: trUrl, name: tr.name || tr.type || "Trailer" }));
+                    } catch (e) {}
+                }
+                if (!trailers.length) trailers = undefined;
+            }
+
+            var director = undefined;
+            if (meta.director) {
+                director = Array.isArray(meta.director) ? meta.director.filter(Boolean).join(", ") : str(meta.director);
+                if (!director) director = undefined;
+            }
+
+            var status = undefined;
+            if (meta.status) {
+                var sv = str(meta.status).toLowerCase();
+                if (sv === "ended") status = "completed";
+                else if (sv === "returning series" || sv === "continuing" || sv === "ongoing") status = "ongoing";
+                else if (sv === "in production" || sv === "planned") status = "upcoming";
+            }
+
+            cb({ success: true, data: new MultimediaItem({
+                title: meta.name || meta.title || "Unknown",
+                url: metaId,
+                posterUrl: meta.poster || meta.posterUrl || "",
+                posterShape: meta.posterShape || "poster",
+                bannerUrl: meta.background || meta.backdrop || meta.banner || "",
+                logoUrl: meta.logo || meta.logoUrl || "",
+                type: st,
+                description: desc,
+                year: y,
+                score: s,
+                genres: parseGenres(meta),
                 cast: cast,
+                director: director,
                 trailers: trailers,
-                recommendations: recommendations,
-                episodes: episodes,
-                nextAiring: nextAiring,
-                syncData: { tmdb: String(tmdbId), imdb: imdbId }
-            });
-
-            cb({ success: true, data: item });
+                runtime: meta.runtime ? str(meta.runtime) : undefined,
+                language: meta.language || undefined,
+                country: meta.country || undefined,
+                awards: meta.awards || undefined,
+                website: meta.website || undefined,
+                status: status,
+                episodes: eps
+            })});
         } catch (e) {
-            console.error("[TMDB] load:", e.message || e);
-            try {
-                var m2 = safeJson(url, null);
-                cb({ success: true, data: new MultimediaItem({
-                    title: (m2 && m2.title) || "Unknown",
-                    url: url,
-                    type: (m2 && m2.mediaType === "tv") ? "series" : "movie",
-                    episodes: [new Episode({
-                        name: "Play",
-                        url: url,
-                        season: 1,
-                        episode: 1
-                    })]
-                })});
-            } catch (f) {
-                cb({ success: false, errorCode: "LOAD_ERROR", message: e.message || "Failed" });
-            }
+            console.error("[Hub] respondMeta:", e.message);
+            var ft = skyType(meta.type || "movie");
+            cb({ success: true, data: new MultimediaItem({
+                title: meta.name || meta.title || "Unknown", url: metaId, type: ft,
+                episodes: [new Episode({ name: "Play", url: ft === "movie" ? metaId : metaId + ":1:1", season: 1, episode: 1 })]
+            })});
         }
     }
 
-    // ════════════════════════════════════════════════════════════
-    //  SECTION 3: STREAM SYSTEM (from stremio plugin, adapted)
-    // ════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════
+    //  STREAM SYSTEM — v3 features
+    // ════════════════════════════════════════════════════════════════
 
-    // ── 3a. Stream Configuration ──────────────────────────────
-    var STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-    var STREAM_HEADERS = {
-        "User-Agent": STREAM_USER_AGENT,
-        "Accept": "application/json",
-        "Accept-Language": "en-US,en;q=0.5"
+    var STRM_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
+    var LANG = {
+        "en":"English","es":"Spanish","fr":"French","de":"German","it":"Italian","pt":"Portuguese",
+        "ru":"Russian","ja":"Japanese","ko":"Korean","zh":"Chinese","ar":"Arabic","hi":"Hindi",
+        "nl":"Dutch","pl":"Polish","tr":"Turkish","th":"Thai","vi":"Vietnamese","cs":"Czech",
+        "hu":"Hungarian","ro":"Romanian","he":"Hebrew","el":"Greek","sv":"Swedish","da":"Danish",
+        "no":"Norwegian","fi":"Finnish","id":"Indonesian","ms":"Malay","bg":"Bulgarian","uk":"Ukrainian",
+        "sr":"Serbian","hr":"Croatian","sk":"Slovak","lt":"Lithuanian","lv":"Latvian","et":"Estonian",
+        "is":"Icelandic","sl":"Slovenian","bn":"Bengali","ta":"Tamil","te":"Telugu","mr":"Marathi",
+        "ml":"Malayalam","kn":"Kannada","gu":"Gujarati","pa":"Punjabi","ur":"Urdu",
+        "eng":"English","spa":"Spanish","fra":"French","deu":"German","ita":"Italian","por":"Portuguese",
+        "rus":"Russian","jpn":"Japanese","kor":"Korean","zho":"Chinese","ara":"Arabic","hin":"Hindi",
+        "nld":"Dutch","pol":"Polish","tur":"Turkish","tha":"Thai","vie":"Vietnamese","ces":"Czech",
+        "hun":"Hungarian","ron":"Romanian","heb":"Hebrew","ell":"Greek","swe":"Swedish","dan":"Danish",
+        "nor":"Norwegian","fin":"Finnish","ind":"Indonesian","msa":"Malay","bul":"Bulgarian","ukr":"Ukrainian",
+        "srp":"Serbian","hrv":"Croatian","slk":"Slovak","lit":"Lithuanian","lva":"Latvian","est":"Estonian",
+        "isl":"Icelandic","slv":"Slovenian","ben":"Bengali","tam":"Tamil","tel":"Telugu","mar":"Marathi",
+        "mal":"Malayalam","kan":"Kannada","guj":"Gujarati","pan":"Punjabi","urd":"Urdu",
+        "x-subs":"Subs","x-sub":"Sub","x-all":"All","x-any":"Any","x-force":"Forced","x-sdh":"SDH","x-cc":"CC"
     };
-    var ADDON_TIMEOUT_MS = 20000;       // 20s — webstreamrmbg needs ~18s for cold starts
-    var STREAM_CACHE_TTL = 600000;      // 10 min cache
-
-
-
-    // ── 3b. Caches ────────────────────────────────────────────
-    var streamResultCache = {};
-    var tmdbIdCache = {};           // tmdbId → imdbId cache
-
-    // ── 3c. Language Map (ISO 639 -> Display Name) ────────────
-    var LANG_MAP = {
-        "en": "English", "es": "Spanish", "fr": "French", "de": "German",
-        "it": "Italian", "pt": "Portuguese", "ru": "Russian", "ja": "Japanese",
-        "ko": "Korean", "zh": "Chinese", "ar": "Arabic", "hi": "Hindi",
-        "nl": "Dutch", "pl": "Polish", "tr": "Turkish", "th": "Thai",
-        "vi": "Vietnamese", "cs": "Czech", "hu": "Hungarian", "ro": "Romanian",
-        "he": "Hebrew", "el": "Greek", "sv": "Swedish", "da": "Danish",
-        "no": "Norwegian", "fi": "Finnish", "id": "Indonesian", "ms": "Malay",
-        "bg": "Bulgarian", "uk": "Ukrainian", "sr": "Serbian", "hr": "Croatian",
-        "sk": "Slovak", "lt": "Lithuanian", "lv": "Latvian", "et": "Estonian",
-        "is": "Icelandic", "mt": "Maltese", "sl": "Slovenian", "km": "Khmer",
-        "lo": "Lao", "bn": "Bengali", "ta": "Tamil", "te": "Telugu",
-        "mr": "Marathi", "ml": "Malayalam", "kn": "Kannada", "gu": "Gujarati",
-        "pa": "Punjabi", "ur": "Urdu",
-
-        "eng": "English", "spa": "Spanish", "fra": "French", "fre": "French",
-        "deu": "German", "ger": "German", "ita": "Italian", "por": "Portuguese",
-        "rus": "Russian", "jpn": "Japanese", "kor": "Korean", "zho": "Chinese",
-        "chi": "Chinese", "ara": "Arabic", "hin": "Hindi", "nld": "Dutch",
-        "dut": "Dutch", "pol": "Polish", "tur": "Turkish", "tha": "Thai",
-        "vie": "Vietnamese", "ces": "Czech", "cze": "Czech", "hun": "Hungarian",
-        "ron": "Romanian", "rum": "Romanian", "heb": "Hebrew", "ell": "Greek",
-        "gre": "Greek", "swe": "Swedish", "dan": "Danish", "nor": "Norwegian",
-        "fin": "Finnish", "ind": "Indonesian", "msa": "Malay", "may": "Malay",
-        "bul": "Bulgarian", "ukr": "Ukrainian", "srp": "Serbian", "hrv": "Croatian",
-        "slk": "Slovak", "slo": "Slovak", "lit": "Lithuanian", "lva": "Latvian",
-        "est": "Estonian", "isl": "Icelandic", "mlt": "Maltese", "slv": "Slovenian",
-        "khm": "Khmer", "lao": "Lao", "ben": "Bengali", "tam": "Tamil",
-        "tel": "Telugu", "mar": "Marathi", "mal": "Malayalam", "kan": "Kannada",
-        "guj": "Gujarati", "pan": "Punjabi", "urd": "Urdu"
-    };
-
-    // ── 3d. Logging ───────────────────────────────────────────
-    var DEBUG = true;
-    function slog(level, msg, data) {
-        if (level === "debug" && !DEBUG) return;
-        var pfx = "[STRM] ";
-        if (data !== undefined) console.log(pfx + msg, data);
-        else console.log(pfx + msg);
+    function normLang(c) {
+        if (!c) return "Unknown";
+        return LANG[c.split("-")[0].toLowerCase()] || c.split("-")[0].toUpperCase() || c;
     }
 
-    // ── 3e. URL Helpers ───────────────────────────────────────
-    function decodeStreamUrl(url) {
-        try {
-            var parsed = JSON.parse(url);
-
-            // Format from source 1 (tmdb-catalog): { tmdbId, mediaType, seasonNumber, episodeNumber, title }
-            if (parsed.tmdbId !== undefined) {
-                return {
-                    isTmdbFormat: true,
-                    tmdbId: parsed.tmdbId,
-                    mediaType: parsed.mediaType || "movie",
-                    season: parsed.seasonNumber || 0,
-                    episode: parsed.episodeNumber || 0,
-                    title: parsed.title || "",
-                    episodeTitle: parsed.episodeTitle || ""
-                };
-            }
-
-            // Format from source 2 (stremio): { i, t, s, e }
-            if (parsed.i !== undefined) {
-                return {
-                    isTmdbFormat: false,
-                    imdbId: parsed.i,
-                    mediaType: parsed.t,
-                    season: parsed.s || 0,
-                    episode: parsed.e || 0
-                };
-            }
-
-            return null;
-        } catch (e) {
-            return null;
-        }
-    }
-
-    function fixSourceUrl(url) {
-        return (url || "")
-            .replace(/\/manifest\.json$/, "")
-            .replace(/\/$/, "")
-            .replace(/^stremio:\/\//, "https://");
-    }
-
-    function isValidHttpUrl(str) {
-        if (!str) return false;
-        return str.indexOf("http://") === 0 || str.indexOf("https://") === 0;
-    }
-
-    // ── 3f. HTTP Helpers ──────────────────────────────────────
-    async function fetchJson(url, headers) {
-        var merged = Object.assign({}, STREAM_HEADERS, headers || {});
-        var res = await http_get(url, merged);
-        if (!res || !res.body) throw new Error("Empty response");
-        if (res.status !== 200) throw new Error("HTTP " + res.status);
-        var body = res.body;
-        if (typeof body === "string" && body.trim().charAt(0) === "<") {
-            throw new Error("HTML response");
-        }
-        if (typeof body === "object") return body;
-        return JSON.parse(body);
-    }
-
-    async function fetchJsonSafe(url, headers) {
-        try { return await fetchJson(url, headers); } catch (e) { return null; }
-    }
-
-    function fetchWithTimeout(url, headers, timeoutMs) {
-        timeoutMs = timeoutMs || ADDON_TIMEOUT_MS;
-        return new Promise(function(resolve) {
-            var resolved = false;
-            var timer = setTimeout(function() {
-                if (!resolved) { resolved = true; resolve(null); }
-            }, timeoutMs);
-            fetchJsonSafe(url, headers).then(function(result) {
-                if (!resolved) { resolved = true; clearTimeout(timer); resolve(result); }
-            }).catch(function() {
-                if (!resolved) { resolved = true; clearTimeout(timer); resolve(null); }
-            });
-        });
-    }
-
-    // ── 3h. Get Addon URLs from manifest ──
-    function getStreamAddons() {
-        try {
-            if (typeof manifest !== 'undefined' && manifest) {
-                if (manifest.addons && Array.isArray(manifest.addons)) return manifest.addons;
-                if (manifest.streamAddons && Array.isArray(manifest.streamAddons)) return manifest.streamAddons;
-            }
-        } catch (e) {}
-        return [];
-    }
-
-    function extractSourceName(addonUrl) {
-        try {
-            var hostname = addonUrl.replace(/https?:\/\//, "").split("/")[0].replace(/^www\./, "");
-            var parts = hostname.split(".");
-            if (parts.length >= 2) {
-                var tlds = ["com", "org", "net", "io", "app", "dev", "tv", "co", "uk", "de", "xyz", "fun", "cloud", "me"];
-                var best = parts[0];
-                if (tlds.indexOf(best) !== -1 && parts.length > 1) best = parts[1];
-                return best.charAt(0).toUpperCase() + best.slice(1);
-            }
-            return parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
-        } catch (e) { return "Addon"; }
-    }
-
-    // ── 3h. Tracker Management (instant, no external fetches) ──
-    var STATIC_TRACKERS = [
+    var TRACKERS = [
         "udp://tracker.opentrackr.org:1337/announce",
         "udp://tracker.openbittorrent.com:6969/announce",
         "udp://tracker.torrent.eu.org:451/announce",
         "udp://exodus.desync.com:6969/announce",
         "udp://public.popcorn-tracker.org:6969/announce"
     ];
-    async function getTrackers() {
-        return STATIC_TRACKERS;
+    function magnetLink(hash, name) {
+        var m = "magnet:?xt=urn:btih:" + hash + "&dn=" + encodeURIComponent(name || hash);
+        for (var i = 0, n = 0; i < TRACKERS.length && n < 20; i++) { m += "&tr=" + encodeURIComponent(TRACKERS[i]); n++; }
+        return m;
     }
 
-    // ── 3i. Magnet Link Builder ────────────────────────────────
-    function buildMagnetLink(infoHash, displayName, trackers) {
-        var magnet = "magnet:?xt=urn:btih:" + infoHash + "&dn=" + encodeURIComponent(displayName || infoHash);
-        if (trackers && trackers.length > 0) {
-            var added = 0;
-            for (var ti = 0; ti < trackers.length && added < 20; ti++) {
-                magnet += "&tr=" + encodeURIComponent(trackers[ti]);
-                added++;
+    function parseFeatures(s) {
+        var r = { resolution:"Auto", codec:null, hdr:null, audio:null, channels:null, sourceType:"unknown", _sortKey: 0 };
+        if (!s) return r;
+        var str = s.toLowerCase();
+        if (/\b(2160|4k|uhd)\b/.test(str)) { r.resolution = "4K"; r._sortKey = 5; }
+        else if (/\b1440\b/.test(str)) { r.resolution = "1440p"; r._sortKey = 4; }
+        else if (/\b1080\b/.test(str)) { r.resolution = "1080p"; r._sortKey = 3; }
+        else if (/\b720\b/.test(str)) { r.resolution = "720p"; r._sortKey = 2; }
+        else if (/\b480\b/.test(str)) { r.resolution = "480p"; r._sortKey = 1; }
+        else if (/\b360\b/.test(str)) { r.resolution = "360p"; r._sortKey = 1; }
+        else if (/\b(cam|ts|tc|scr|workprint|hqcam)\b/.test(str)) { r.resolution = "CAM"; r._sortKey = 0; }
+        if (/\b(av1|av01)\b/.test(str)) r.codec = "AV1";
+        else if (/\b(x?v?265|hevc)\b/.test(str)) r.codec = "HEVC";
+        else if (/\b(x264|h\.?264|avc)\b/.test(str)) r.codec = "H.264";
+        else if (/\b(vp9|vp9\.2)\b/.test(str)) r.codec = "VP9";
+        else if (/\b(vc[\s-]?1|vc1)\b/.test(str)) r.codec = "VC-1";
+        else if (/\b(xvid|divx)\b/.test(str)) r.codec = "XviD";
+        if (/\b(dv|dovi|dolby[\s._-]?vision)\b/.test(str)) r.hdr = "DV";
+        else if (/\bhdr10\+\b/.test(str)) r.hdr = "HDR10+";
+        else if (/\bhdr10\b/.test(str)) r.hdr = "HDR10";
+        else if (/\bhdr\b/.test(str)) r.hdr = "HDR";
+        if (/\bhlg\b/.test(str)) r.hdr = r.hdr ? r.hdr + "+HLG" : "HLG";
+        if (/\b(atmos|truehd)\b/.test(str)) r.audio = "Atmos";
+        else if (/\bdts[-\s]?hd\b/.test(str)) r.audio = "DTS-HD";
+        else if (/\bdts\b/.test(str)) r.audio = "DTS";
+        else if (/\b(flac|lpcm)\b/.test(str)) r.audio = "FLAC";
+        else if (/\b(e?aac)\b/.test(str)) r.audio = "AAC";
+        else if (/\bmp3\b/.test(str)) r.audio = "MP3";
+        else if (/\bopus\b/.test(str)) r.audio = "Opus";
+        var ch = str.match(/\b[257]\.1\b/); if (ch) r.channels = ch[0];
+        if (/\btorrent\b/.test(str) || /\binfohash\b/.test(str)) r.sourceType = "torrent";
+        else if (/\bhttp\b/.test(str) || /\bhls\b/.test(str) || /\bm3u8\b/.test(str) || /\bmpd\b/.test(str)) r.sourceType = "http";
+        else if (/\byoutube\b/.test(str) || /\bytId\b/.test(str)) r.sourceType = "youtube";
+        return r;
+    }
+
+    // Quality sort: higher _sortKey = better quality
+    var QUALITY_ORDER = { "4K": 5, "1440p": 4, "1080p": 3, "720p": 2, "480p": 1, "360p": 1, "CAM": 0, "Auto": 2 };
+    function qualitySortKey(stream) {
+        var q = (stream && stream.quality) || "Auto";
+        return QUALITY_ORDER[q] !== undefined ? QUALITY_ORDER[q] : 2;
+    }
+
+    function fmtStream(stream, an, bu) {
+        try {
+            if (!stream) return null;
+            var on = str(stream.name).replace(/\n/g, " ").trim();
+            var ot = str(stream.title).replace(/\n/g, " ").trim();
+            var desc = str(stream.description);
+            var f = parseFeatures(on + " " + ot + " " + desc);
+            var dn = ot || on || an;
+
+            var hdrs = {};
+            if (stream.behaviorHints) {
+                if (stream.behaviorHints.proxyHeaders && stream.behaviorHints.proxyHeaders.request)
+                    hdrs = Object.assign({}, stream.behaviorHints.proxyHeaders.request);
+                else if (stream.behaviorHints.headers)
+                    hdrs = Object.assign({}, stream.behaviorHints.headers);
             }
-        }
-        return magnet;
-    }
+            if (!hdrs["User-Agent"]) hdrs["User-Agent"] = STRM_UA;
+            if (!hdrs["Referer"]) hdrs["Referer"] = bu + "/";
+            if (!hdrs["Origin"]) hdrs["Origin"] = bu;
 
-    // ── 3j. Stream Feature Parsing ────────────────────────────
-    function parseStreamFeatures(str) {
-        var result = {
-            resolution: "Auto", codec: null, hdr: null, audio: null,
-            channels: null, is3D: false, isRemux: false, isWebdl: false,
-            isBluray: false, debrid: null, isCached: false, sourceType: "unknown"
-        };
-        if (!str) return result;
-        var s = String(str).toLowerCase();
+            var bh = Object.assign({}, stream.behaviorHints || {});
+            delete bh.proxyHeaders; delete bh.headers;
 
-        if (/\b(2160|4k|uhd)\b/.test(s)) result.resolution = "4K";
-        else if (/\b1440\b/.test(s)) result.resolution = "1440p";
-        else if (/\b1080\b/.test(s)) result.resolution = "1080p";
-        else if (/\b720\b/.test(s)) result.resolution = "720p";
-        else if (/\b480\b/.test(s)) result.resolution = "480p";
-        else if (/\b360\b/.test(s)) result.resolution = "360p";
+            if (stream.url && isHttp(stream.url)) {
+                var isDirect = /\.(mp4|mkv|webm|avi|mov)(\?|$)/i.test(stream.url);
+                var isStream = /\.(m3u8|mpd)(\?|$)/i.test(stream.url);
+                var isProxy = /(extract|proxy|redirect|gateway|fetch|resolve)/i.test(stream.url);
+                var hasRestrictiveHeaders = Object.keys(hdrs).length > 1;
 
-        if (/\b(av1|av01)\b/.test(s)) result.codec = "AV1";
-        else if (/\b(x?v?265|hevc)\b/.test(s)) result.codec = "HEVC";
-        else if (/\b(x264|h\.?264|avc)\b/.test(s)) result.codec = "H.264";
-        else if (/\b(vp9|vp9\.2)\b/.test(s)) result.codec = "VP9";
-        else if (/\b(vc[\s-]?1|vc1)\b/.test(s)) result.codec = "VC-1";
-        else if (/\b(xvid|divx)\b/.test(s)) result.codec = "XviD";
-
-        if (/\b(dv|dovi|dolby[\s._-]?vision)\b/.test(s)) result.hdr = "DV";
-        else if (/\bhdr10\+\b/.test(s)) result.hdr = "HDR10+";
-        else if (/\bhdr10\b/.test(s)) result.hdr = "HDR10";
-        else if (/\bhdr\b/.test(s)) result.hdr = "HDR";
-        if (/\bhlg\b/.test(s)) result.hdr = result.hdr ? result.hdr + "+HLG" : "HLG";
-
-        if (/\b(atmos|truehd)\b/.test(s)) result.audio = "Atmos";
-        else if (/\bdts[-\s]?hd\b/.test(s)) result.audio = "DTS-HD";
-        else if (/\bdts\b/.test(s)) result.audio = "DTS";
-        else if (/\b(flac|lpcm)\b/.test(s)) result.audio = "FLAC";
-        else if (/\b(e?aac)\b/.test(s)) result.audio = "AAC";
-        else if (/\bmp3\b/.test(s)) result.audio = "MP3";
-        else if (/\bopus\b/.test(s)) result.audio = "Opus";
-
-        var chMatch = s.match(/\b[257]\.1\b/);
-        if (chMatch) result.channels = chMatch[0];
-
-        if (/\bremux\b/.test(s)) result.isRemux = true;
-        else if (/\b(web[\s.-]?dl|webrip|web)\b/.test(s)) result.isWebdl = true;
-        else if (/\b(blu[\s.-]?ray|bdrip|brrip|bdr)\b/.test(s)) result.isBluray = true;
-
-        if (/\b3d\b/.test(s) || /\b[hs]?sbs\b/.test(s) || /\btab\b/.test(s) || /\bover.?under\b/.test(s)) result.is3D = true;
-
-        if (/\b\[?RD\]?\b/.test(s) || /\breal[-\s]?debrid\b/.test(s)) result.debrid = "RD";
-        else if (/\b\[?AD\]?\b/.test(s) || /\ball[-\s]?debrid\b/.test(s)) result.debrid = "AD";
-        else if (/\b\[?PM\]?\b/.test(s) || /\bpremiumize\b/.test(s)) result.debrid = "PM";
-        else if (/\b\[?TB\]?\b/.test(s) || /\btorbox\b/.test(s)) result.debrid = "TB";
-        else if (/\b\[?ED\]?\b/.test(s) || /\beasynews\b/.test(s)) result.debrid = "EN";
-
-        if (/\btorrent\b/.test(s) || /\binfohash\b/.test(s)) result.sourceType = "torrent";
-        else if (/\busenet\b/.test(s) || /\bnzb\b/.test(s)) result.sourceType = "usenet";
-        else if (/\bhttp\b/.test(s) || /\bhls\b/.test(s) || /\bm3u8\b/.test(s) || /\bmpd\b/.test(s)) result.sourceType = "http";
-        else if (/\byoutube\b/.test(s) || /\bytId\b/.test(s)) result.sourceType = "youtube";
-
-        return result;
-    }
-
-    // ── 3k. Stream Formatter (Template Engine) ────────────────
-
-    /**
-     * Format a single stream from an addon into a StreamResult with
-     * polished display name ("source") and technical description.
-     *
-     * Title format:  {Addon} ⚡️ {Quality} 🎞️ {Codec} 🎨 {HDR} 🔊 {Audio} 📦 {Size}
-     * Description:   Detailed multiline spec
-     */
-    function formatStream(stream, addonName, baseUrl, trackers) {
-        // Use the ORIGINAL stream name as-is from the addon
-        // stream.name = short label (e.g. "Torrentio\n4k HDR")
-        // stream.title = detailed filename (e.g. "Fight.Club.1999.2160p... 👤 129 💾 36.6 GB")
-        var originalName = stream.name ? stream.name.replace(/\n/g, " ").trim() : "";
-        var originalTitle = stream.title ? stream.title.replace(/\n/g, " ").trim() : "";
-        var featureText = originalName + " " + originalTitle + " " + (stream.description || "");
-        var features = parseStreamFeatures(featureText);
-
-        // Use the addon's own title (detailed) if available, otherwise fall back to name
-        var displayName = originalTitle || originalName || addonName;
-
-        // ── Build StreamResult ──
-        // Handle headers: start with addon's behaviorHints, add defaults only if missing
-        var responseHeaders = {};
-        if (stream.behaviorHints) {
-            if (stream.behaviorHints.proxyHeaders && stream.behaviorHints.proxyHeaders.request) {
-                responseHeaders = Object.assign({}, stream.behaviorHints.proxyHeaders.request);
-            } else if (stream.behaviorHints.headers) {
-                responseHeaders = Object.assign({}, stream.behaviorHints.headers);
-            }
-        }
-        if (!responseHeaders["User-Agent"]) responseHeaders["User-Agent"] = STREAM_USER_AGENT;
-        if (!responseHeaders["Referer"]) responseHeaders["Referer"] = baseUrl + "/";
-        if (!responseHeaders["Origin"]) responseHeaders["Origin"] = baseUrl;
-
-        // Extract resolution from stream name/title/url
-        var resolution = features.resolution !== "Auto" ? features.resolution : null;
-
-        var result = {
-            url: null,
-            quality: features.resolution,
-            source: displayName,
-            title: displayName,
-            cached: stream.cached || false,
-            size: stream.size || null,
-            headers: responseHeaders,
-            behaviorHints: stream.behaviorHints || {},
-            addonSource: addonName,
-            resolution: resolution
-        };
-
-        // --- 1) DIRECT HTTP(S) URL ---
-        if (stream.url && isValidHttpUrl(stream.url)) {
-            result.url = stream.url;
-            // Add Origin for HLS/DASH streams if not already set
-            if (stream.url.indexOf(".m3u8") !== -1 || stream.url.indexOf(".mpd") !== -1) {
-                if (!result.headers["Origin"]) {
-                    try { var u = new URL(stream.url); result.headers["Origin"] = u.protocol + "//" + u.hostname; } catch (e) {}
+                // MAGIC_PROXY_v1 for header-restricted streams
+                var finalUrl = stream.url;
+                if (hasRestrictiveHeaders && !isDirect) {
+                    finalUrl = "MAGIC_PROXY_v1" + btoa(stream.url);
                 }
+
+                if (!bh.notWebReady && (!isDirect || isProxy || isStream)) bh.notWebReady = true;
+                if (bh.notWebReady && Object.keys(bh).length === 1) bh = { notWebReady: true };
+
+                var result = new StreamResult({
+                    url: finalUrl, quality: f.resolution,
+                    source: dn, title: dn,
+                    cached: !!stream.cached, size: stream.size || null,
+                    headers: hdrs, behaviorHints: bh,
+                    addonSource: an, resolution: f.resolution !== "Auto" ? f.resolution : null,
+                    _sortKey: f._sortKey
+                });
+                if (isStream && !result.headers["Origin"]) {
+                    try { result.headers["Origin"] = new URL(stream.url).origin; } catch (e) {}
+                }
+                if (Array.isArray(stream.subtitles)) {
+                    result.subtitles = stream.subtitles.map(function(sub) {
+                        return { id: sub.id || "", url: sub.url || "", lang: normLang(sub.lang), label: sub.label || normLang(sub.lang) };
+                    });
+                }
+                return result;
             }
-            // Subtitles for direct streams
-            if (stream.subtitles && Array.isArray(stream.subtitles) && stream.subtitles.length > 0) {
-                result.subtitles = stream.subtitles.map(function(sub) {
-                    return { url: sub.url, lang: normalizeLang(sub.lang), label: normalizeLang(sub.lang) };
+
+            if (stream.infoHash) {
+                var fn = (stream.behaviorHints && stream.behaviorHints.filename) || stream.title || stream.name || "";
+                if (!Object.keys(bh).length) bh = { notWebReady: true };
+                return new StreamResult({
+                    url: magnetLink(stream.infoHash, fn),
+                    infoHash: stream.infoHash, fileIndex: stream.fileIdx !== undefined ? stream.fileIdx : 0,
+                    quality: f.resolution, source: dn, title: fn || dn,
+                    headers: hdrs, behaviorHints: bh,
+                    addonSource: an, resolution: f.resolution !== "Auto" ? f.resolution : null,
+                    _sortKey: f._sortKey
                 });
             }
-            return new StreamResult(result);
-        }
 
-        // --- 2) TORRENT (infoHash) - use magnet links ──
-        if (stream.infoHash) {
-            var filename = "";
-            if (stream.behaviorHints && stream.behaviorHints.filename) filename = stream.behaviorHints.filename;
-            else if (stream.title) filename = stream.title;
-            else if (stream.name) filename = stream.name;
-            result.url = buildMagnetLink(stream.infoHash, filename || displayName, trackers);
-            result.infoHash = stream.infoHash;
-            result.fileIndex = stream.fileIdx || 0;
-            result.source = displayName;
-            result.title = filename;
-            if (!result.behaviorHints || Object.keys(result.behaviorHints).length === 0) {
-                result.behaviorHints = { notWebReady: true };
-            }
-            return new StreamResult(result);
-        }
-
-        // --- 3) YOUTUBE ---
-        if (stream.ytId) {
-            result.url = "https://www.youtube.com/watch?v=" + stream.ytId;
-            result.quality = "YouTube";
-            result.source = addonName + " ▶️ YouTube";
-            result.headers = { "Referer": "https://www.youtube.com/", "User-Agent": STREAM_USER_AGENT };
-            result.behaviorHints = { notWebReady: true };
-            return new StreamResult(result);
-        }
-
-        // --- 4) EXTERNAL URL ---
-        if (stream.externalUrl) {
-            result.url = stream.externalUrl;
-            result.source = addonName + " External";
-            result.behaviorHints = { notWebReady: true };
-            return new StreamResult(result);
-        }
-
-        // --- 5) FALLBACK (url present but not http) ---
-        if (stream.url) {
-            result.url = stream.url;
-            var fbHash = null;
-            if (stream.url.indexOf("magnet:?xt=urn:btih:") === 0) {
-                var match = stream.url.match(/urn:btih:([a-fA-F0-9]+)/);
-                if (match) fbHash = match[1].toLowerCase();
-            }
-            if (fbHash) {
-                result.infoHash = fbHash;
-                result.fileIndex = stream.fileIdx !== undefined ? stream.fileIdx : 0;
-            }
-            return new StreamResult(result);
-        }
-
-        return null;
-    }
-
-    function formatBytes(bytes) {
-        if (!bytes || bytes <= 0) return "N/A";
-        var units = ["B", "KB", "MB", "GB", "TB"];
-        var i = 0;
-        var size = bytes;
-        while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
-        return size.toFixed(1) + " " + units[i];
-    }
-
-    function normalizeLang(code) {
-        if (!code) return "Unknown";
-        var key = code.split("-")[0].toLowerCase();
-        return LANG_MAP[key] || key.toUpperCase() || code;
-    }
-
-    // ── 3k. Process Raw Streams from Addon ────────────────────
-    async function processStreamResponse(streams, addonName, baseUrl) {
-        if (!streams || !Array.isArray(streams)) return [];
-        var trackers = await getTrackers();
-        var results = [];
-        for (var s = 0; s < streams.length; s++) {
-            try {
-                var formatted = formatStream(streams[s], addonName, baseUrl, trackers);
-                if (formatted) results.push(formatted);
-            } catch (e) {}
-        }
-        return results;
-    }
-
-    // ── 3l. Subtitle Fetching (OpenSubtitles) ─────────────────
-    async function fetchSubtitles(imdbId, season, episode) {
-        if (!imdbId || imdbId.indexOf("tt") !== 0) return [];
-        try {
-            var slug = (season > 0)
-                ? "series/" + imdbId + ":" + season + ":" + episode
-                : "movie/" + imdbId;
-            var url = "https://opensubtitles-v3.strem.io/subtitles/" + slug + ".json";
-            var data = await fetchWithTimeout(url, STREAM_HEADERS, 15000);
-            if (data && data.subtitles) {
-                return data.subtitles.map(function(sub) {
-                    return { url: sub.url, lang: normalizeLang(sub.lang), label: normalizeLang(sub.lang) };
-                }).filter(function(s) { return s.url && s.lang; });
-            }
-        } catch (e) { slog("debug", "Subtitle fetch failed", e.message); }
-        return [];
-    }
-
-    // ── 3m. TMDB ID → IMDb ID resolution (cached) ─────────────
-    var TMDBID_CACHE_TTL = 86400000; // 24h cache for ID lookups
-    async function tmdbIdToImdb(tmdbId, mediaType) {
-        var cacheKey = tmdbId + "|" + (mediaType || "");
-        var cached = tmdbIdCache[cacheKey];
-        if (cached && (Date.now() - cached.ts) < TMDBID_CACHE_TTL) {
-            return cached.imdbId;
-        }
-        try {
-            var route = (mediaType === "tv" || mediaType === "series") ? "tv" : "movie";
-            var data = await tmdb("/" + route + "/" + tmdbId + "/external_ids");
-            var imdbId = (data && data.imdb_id) ? data.imdb_id : null;
-            tmdbIdCache[cacheKey] = { ts: Date.now(), imdbId: imdbId };
-            return imdbId;
-        } catch (e) {
-            tmdbIdCache[cacheKey] = { ts: Date.now(), imdbId: null };
-            return null;
-        }
-    }
-
-    // ── 3o. Torrentio Fallback — only if Torrentio URL is in the addon list ──
-    function findTorrentioUrl() {
-        var addons = getStreamAddons();
-        for (var i = 0; i < addons.length; i++) {
-            if (addons[i].indexOf("torrentio") !== -1) return fixSourceUrl(addons[i]);
-        }
-        return null;
-    }
-    async function tryTorrentioFallback(id, type, season, episode) {
-        var baseUrl = findTorrentioUrl();
-        if (!baseUrl) return [];
-        try {
-            var encodedId = encodeURIComponent(id);
-            var url = baseUrl + "/stream/" + type + "/" + encodedId;
-            if (season > 0 && episode > 0) url += ":" + season + ":" + episode;
-            url += ".json";
-            var data = await fetchWithTimeout(url, STREAM_HEADERS, ADDON_TIMEOUT_MS);
-            if (data && data.streams) return await processStreamResponse(data.streams, "Torrentio", baseUrl);
-        } catch (e) {}
-        return [];
-    }
-
-    // ── 3p. Get streams from a single addon ──
-    function getRandomUA() {
-        return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-    }
-    async function queryAddon(addonManifestUrl, type, id, season, episode) {
-        try {
-            var baseUrl = fixSourceUrl(addonManifestUrl);
-            var addonName = extractSourceName(addonManifestUrl);
-            var encodedId = encodeURIComponent(id);
-            var ua = getRandomUA();
-
-            // Request headers: Origin + Referer are needed by some CDNs
-            // NO Accept-Encoding — runtime can't decompress gzip
-            var reqHeaders = {
-                "User-Agent": ua,
-                "Accept": "application/json",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Referer": baseUrl + "/",
-                "Origin": baseUrl
-            };
-
-            // Try URL patterns (single attempt)
-            var urlsToTry = [
-                baseUrl + "/stream/" + type + "/" + encodedId + ".json"
-            ];
-            if (season > 0 && episode > 0) {
-                urlsToTry.push(baseUrl + "/stream/" + type + "/" + encodedId + ":" + season + ":" + episode + ".json");
-                urlsToTry.push(baseUrl + "/stream/" + type + "/" + encodedId + ".json?season=" + season + "&episode=" + episode);
+            if (stream.ytId) {
+                return new StreamResult({
+                    url: "https://www.youtube.com/watch?v=" + stream.ytId,
+                    quality: "YouTube", source: an + " YouTube",
+                    headers: { "Referer": "https://www.youtube.com/", "User-Agent": STRM_UA },
+                    behaviorHints: { notWebReady: true },
+                    _sortKey: 1
+                });
             }
 
-            for (var ui = 0; ui < urlsToTry.length; ui++) {
-                var streamData = await fetchWithTimeout(urlsToTry[ui], reqHeaders, ADDON_TIMEOUT_MS);
-                if (streamData && streamData.streams && streamData.streams.length > 0) {
-                    slog("debug", addonName + " returned " + streamData.streams.length + " streams");
-                    return await processStreamResponse(streamData.streams, addonName, baseUrl);
+            if (stream.externalUrl) {
+                var eu = stream.externalUrl.toLowerCase();
+                var garbage = ["ko-fi.com","patreon.com","buymeacoffee.com","paypal.com",
+                    "discord.gg","discord.com","facebook.com","twitter.com","x.com",
+                    "instagram.com","t.me","telegram.org","reddit.com","whatsapp.com",
+                    "bit.ly","tinyurl.com","goo.gl","ow.ly","tiny.cc","adf.ly","shorte.st"];
+                var isGarbage = false;
+                for (var gi = 0; gi < garbage.length; gi++) { if (eu.indexOf(garbage[gi]) !== -1) { isGarbage = true; break; } }
+                if (!isGarbage) {
+                    return new StreamResult({
+                        url: stream.externalUrl, quality: f.resolution,
+                        source: an + " External",
+                        headers: hdrs, behaviorHints: Object.keys(bh).length ? bh : { notWebReady: true },
+                        _sortKey: f._sortKey
+                    });
+                }
+                return null;
+            }
+
+            if (stream.nzbUrl) {
+                return new StreamResult({
+                    url: stream.nzbUrl, quality: f.resolution, source: an + " Usenet",
+                    headers: hdrs, behaviorHints: Object.keys(bh).length ? bh : { notWebReady: true },
+                    _sortKey: f._sortKey
+                });
+            }
+
+            var archKeys = [{k:"rarUrls",l:"RAR"},{k:"zipUrls",l:"ZIP"},{k:"7zipUrls",l:"7z"},{k:"tgzUrls",l:"TGZ"},{k:"tarUrls",l:"TAR"}];
+            for (var ai = 0; ai < archKeys.length; ai++) {
+                if (Array.isArray(stream[archKeys[ai].k]) && stream[archKeys[ai].k].length) {
+                    var src = stream[archKeys[ai].k][0];
+                    var srcUrl = (typeof src === "string") ? src : (src.url || "");
+                    if (srcUrl) {
+                        return new StreamResult({
+                            url: srcUrl, quality: f.resolution, source: an + " " + archKeys[ai].l,
+                            headers: hdrs, behaviorHints: Object.keys(bh).length ? bh : { notWebReady: true },
+                            _sortKey: f._sortKey
+                        });
+                    }
                 }
             }
-            return [];
-        } catch (e) {
-            return [];
-        }
+
+            if (stream.url) {
+                var hash = null;
+                if (stream.url.indexOf("magnet:?xt=urn:btih:") === 0) {
+                    var m = stream.url.match(/urn:btih:([a-fA-F0-9]+)/);
+                    if (m) hash = m[1].toLowerCase();
+                }
+                if (!Object.keys(bh).length && (hash || stream.url.indexOf("magnet:") === 0)) bh = { notWebReady: true };
+                var res = new StreamResult({
+                    url: stream.url, quality: f.resolution, source: dn,
+                    headers: hdrs, behaviorHints: bh, title: dn,
+                    addonSource: an, resolution: f.resolution !== "Auto" ? f.resolution : null,
+                    _sortKey: f._sortKey
+                });
+                if (hash) { res.infoHash = hash; res.fileIndex = 0; }
+                return res;
+            }
+
+            return null;
+        } catch (e) { return null; }
     }
 
-    // ============================================================
-    //  loadStreams — THE MAIN EVENT
-    //  Handles BOTH URL formats:
-    //    Format A (tmdb-catalog): { tmdbId, mediaType, seasonNumber, episodeNumber }
-    //    Format B (stremio):      { i, t, s, e }
-    // ============================================================
+    function processStreams(streams, an, bu) {
+        if (!Array.isArray(streams)) return [];
+        var out = [];
+        for (var i = 0; i < streams.length; i++) {
+            try { var f = fmtStream(streams[i], an, bu); if (f) out.push(f); } catch (e) {}
+        }
+        return out;
+    }
+
+    // ── Subtitles with videoHash/videoSize matching ───────────────
+    function fetchSubtitles(id, typeStr, season, episode, streamHints) {
+        var urls = getSubtitlesAddons();
+        if (!urls.length) return Promise.resolve([]);
+
+        var subId = (typeStr === "series" && season > 0 && episode > 0) ? id + ":" + season + ":" + episode : id;
+        var eid = encodeURIComponent(subId);
+
+        var subUrls = [];
+        var subInfo = [];
+        for (var i = 0; i < urls.length; i++) {
+            var bu = baseUrl(urls[i]);
+            if (typeStr === "series" && season > 0 && episode > 0) {
+                subUrls.push(bu + "/subtitles/" + typeStr + "/" + eid + ".json");
+                subInfo.push({ addonUrl: urls[i], isEpFormat: true });
+            }
+            subUrls.push(bu + "/subtitles/" + typeStr + "/" + encodeURIComponent(id) + ".json");
+            subInfo.push({ addonUrl: urls[i], isEpFormat: false });
+
+            // If we have videoHash/videoSize from stream behaviorHints, try those endpoints too
+            if (streamHints && streamHints.videoHash) {
+                subUrls.push(bu + "/subtitles/" + typeStr + "/" + encodeURIComponent(id) + ".json?videoHash=" + encodeURIComponent(streamHints.videoHash) + "&videoSize=" + (streamHints.videoSize || ""));
+                subInfo.push({ addonUrl: urls[i], isEpFormat: false, isHashQuery: true });
+            }
+        }
+
+        if (!subUrls.length) return Promise.resolve([]);
+
+        return httpBatch(subUrls).then(function(results) {
+            var allSubs = [];
+            var seen = {};
+            for (var ri = 0; ri < results.length; ri++) {
+                var sr = results[ri];
+                if (!sr.ok || !sr.data || !Array.isArray(sr.data.subtitles)) continue;
+                for (var si = 0; si < sr.data.subtitles.length; si++) {
+                    var sub = sr.data.subtitles[si];
+                    if (!sub || !sub.url) continue;
+                    var sk = sub.url + "|" + (sub.lang || "");
+                    if (!seen[sk]) {
+                        seen[sk] = true;
+                        allSubs.push({
+                            id: sub.id || String(allSubs.length + 1),
+                            url: sub.url,
+                            lang: normLang(sub.lang),
+                            label: sub.label || normLang(sub.lang) || "Unknown"
+                        });
+                    }
+                }
+            }
+            return allSubs;
+        });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  loadStreams — v3: delayed addons, quality sort, MAGIC_PROXY
+    // ════════════════════════════════════════════════════════════════
+
     async function loadStreams(url, cb) {
         try {
-            var decoded = decodeStreamUrl(url);
-            if (!decoded) {
-                // If URL is not JSON, treat as direct link
-                return cb({ success: true, data: [new StreamResult({
-                    url: url,
-                    quality: "Auto",
-                    source: "Direct Link",
-                    headers: STREAM_HEADERS
-                })] });
-            }
+            var vp = parseVideoId(url);
+            var metaId, mediaType, season = 0, episode = 0;
 
-            var type, season, episode;
-            var imdbId = null;
-
-            // Build a list of IDs to try
-            var idsToTry = [];
-
-            if (decoded.isTmdbFormat) {
-                type = (decoded.mediaType === "tv") ? "series" : "movie";
-                season = decoded.season;
-                episode = decoded.episode;
-
-                // Always try tmdb: prefix first
-                idsToTry.push("tmdb:" + decoded.tmdbId);
-
-                // Use imdbId from URL if load() already resolved it (saves a TMDB call)
-                if (decoded.imdbId) {
-                    imdbId = decoded.imdbId;
-                    if (idsToTry.indexOf(imdbId) === -1) idsToTry.push(imdbId);
-                } else {
-                    // Try to resolve IMDb ID (cached)
-                    imdbId = await tmdbIdToImdb(decoded.tmdbId, decoded.mediaType);
-                    if (imdbId && idsToTry.indexOf(imdbId) === -1) idsToTry.push(imdbId);
-                }
+            if (vp) {
+                metaId = vp.id;
+                mediaType = vp.type || "movie";
+                season = vp.season || 0;
+                episode = vp.episode || 0;
             } else {
-                type = decoded.mediaType || "movie";
-                season = decoded.season;
-                episode = decoded.episode;
-                imdbId = decoded.imdbId;
-                idsToTry.push(imdbId);
+                metaId = url;
+                mediaType = "movie";
             }
 
-            // Stable cache key: use tmdbId if available, otherwise imdbId
-            var cacheKey = (decoded.isTmdbFormat ? "tmdb:" + decoded.tmdbId : idsToTry[0])
-                + ":" + type + ":" + season + ":" + episode;
+            var typeStr = (mediaType === "tv" || mediaType === "series" || mediaType === "anime") ? "series" : "movie";
+            var sAddons = getStreamingAddons();
 
-            // Check cache
-            var cached = streamResultCache[cacheKey];
-            if (cached && (Date.now() - cached.ts) < STREAM_CACHE_TTL) {
-                slog("debug", "Cache hit for " + cacheKey);
-                return cb({ success: true, data: cached.data });
+            if (!sAddons.length) {
+                var subtitles = await fetchSubtitles(metaId, typeStr, season, episode);
+                cb({ success: true, data: [] });
+                return;
             }
 
-            var startTime = Date.now();
-            var addonUrls = getStreamAddons();
+            // Check for cached pre-fetched streams from load()
+            var cached = pCacheGet("streams:" + metaId);
+            if (cached && cached.success && cached.data && cached.data.length) {
+                // Return cached immediately, but still fetch fresh in background
+                cb({ success: true, data: cached.data });
+                // Fall through to refresh in background
+            }
 
-            // ── Kick off subtitle fetch in parallel ──
-            var subtitlePromise = (imdbId && imdbId.indexOf("tt") === 0)
-                ? (season > 0 ? fetchSubtitles(imdbId, season, episode) : fetchSubtitles(imdbId, 0, 0))
-                : Promise.resolve([]);
+            // Step 1: Build stream URLs — one per addon, direct IMDB ID only
+            var streamUrls = [];
+            var streamInfo = [];
 
-            // ── Query ALL addons in parallel (no limit) ──
+            for (var ai = 0; ai < sAddons.length; ai++) {
+                var bu = baseUrl(sAddons[ai]);
+                var an = addonName(sAddons[ai]);
+
+                if (typeStr === "series" && season > 0 && episode > 0) {
+                    streamUrls.push(bu + "/stream/" + typeStr + "/" + encodeURIComponent(metaId + ":" + season + ":" + episode) + ".json");
+                } else {
+                    streamUrls.push(bu + "/stream/" + typeStr + "/" + encodeURIComponent(metaId) + ".json");
+                }
+                streamInfo.push({ addonIdx: ai, addonName: an, baseUrl: bu });
+            }
+
+            // Step 2: Two-phase fetch for delayed addons
+            // Phase 1: Fast fetch (15s) — get quick results
+            // Phase 2: Wait for slow addons (up to 60s total) — collect more links
             var allStreams = [];
+            var addonStreams = {};
 
-            if (addonUrls.length > 0) {
-                slog("info", "Querying " + addonUrls.length + " addons with IDs: " + idsToTry.join(", "));
-                var tasks = addonUrls.map(function(addonUrl, addonIdx) {
-                    return idsToTry.map(function(tryId) {
-                        return queryAddon(addonUrl, type, tryId, season, episode).then(function(streams) {
-                            if (streams && streams.length > 0) {
-                                streams.forEach(function(s) { s._priority = addonIdx; });
-                                return streams;
+            // Phase 1: Fire ALL requests, wait up to 15s for fast responses
+            var phase1Results = await httpBatch(streamUrls);
+
+            // Process phase 1 results
+            for (var ri = 0; ri < phase1Results.length; ri++) {
+                var sr = phase1Results[ri];
+                var info = streamInfo[ri];
+                if (!sr.ok || !sr.data || !Array.isArray(sr.data.streams) || !sr.data.streams.length) continue;
+
+                var idx = info.addonIdx;
+                if (!addonStreams[idx]) {
+                    addonStreams[idx] = { addonName: info.addonName, baseUrl: info.baseUrl, streams: [] };
+                }
+                var processed = processStreams(sr.data.streams, info.addonName, info.baseUrl);
+                addonStreams[idx].streams = addonStreams[idx].streams.concat(processed);
+            }
+
+            // Merge phase 1 results in priority order
+            for (var ai = 0; ai < sAddons.length; ai++) {
+                if (addonStreams[ai]) {
+                    allStreams = allStreams.concat(addonStreams[ai].streams);
+                }
+            }
+
+            // Phase 2: Wait for delayed addons (up to 45s more, total 60s)
+            // Only wait if we have fewer than 10 streams — otherwise return what we have
+            if (allStreams.length < 10) {
+                try {
+                    // Fire a second batch for any addons that didn't respond
+                    // Use setTimeout to give slow addons more time
+                    var phase2Promise = new Promise(function(resolve) {
+                        setTimeout(function() {
+                            // Re-fetch from addons that returned empty in phase 1
+                            var slowUrls = [];
+                            var slowInfo = [];
+                            for (var si = 0; si < streamUrls.length; si++) {
+                                var sr = phase1Results[si];
+                                if (!sr.ok || !sr.data || !Array.isArray(sr.data.streams) || !sr.data.streams.length) {
+                                    slowUrls.push(streamUrls[si]);
+                                    slowInfo.push(streamInfo[si]);
+                                }
                             }
-                            return [];
-                        });
+                            if (!slowUrls.length) { resolve([]); return; }
+                            httpBatch(slowUrls).then(function(results) {
+                                var extra = [];
+                                for (var ri = 0; ri < results.length; ri++) {
+                                    var sr = results[ri];
+                                    var info = slowInfo[ri];
+                                    if (!sr.ok || !sr.data || !Array.isArray(sr.data.streams) || !sr.data.streams.length) continue;
+                                    var idx = info.addonIdx;
+                                    if (!addonStreams[idx]) {
+                                        addonStreams[idx] = { addonName: info.addonName, baseUrl: info.baseUrl, streams: [] };
+                                    }
+                                    var processed = processStreams(sr.data.streams, info.addonName, info.baseUrl);
+                                    addonStreams[idx].streams = addonStreams[idx].streams.concat(processed);
+                                    extra = extra.concat(processed);
+                                }
+                                resolve(extra);
+                            }).catch(function() { resolve([]); });
+                        }, 15000); // Wait 15s before checking slow addons
                     });
-                });
-                // Flatten nested arrays
-                var flat = [];
-                tasks.forEach(function(t) { flat = flat.concat(t); });
-                var results = await Promise.allSettled(flat);
-                results.forEach(function(r) {
-                    if (r.status === "fulfilled" && r.value && r.value.length > 0) {
-                        allStreams = allStreams.concat(r.value);
-                    }
-                });
-            }
 
-            // ── Torrentio fallback if no streams (quick, single attempt) ──
-            if (allStreams.length === 0) {
-                slog("info", "No addon streams, trying Torrentio fallback");
-                for (var fi = 0; fi < idsToTry.length; fi++) {
-                    var fb = await tryTorrentioFallback(idsToTry[fi], type, season, episode);
-                    if (fb.length > 0) {
-                        allStreams = fb;
-                        break;
-                    }
-                }
-            }
+                    var extraStreams = await Promise.race([
+                        phase2Promise,
+                        new Promise(function(r) { setTimeout(function() { r([]); }, 45000); })
+                    ]);
 
-            // ── Robust deduplication ──
-            var seen = {};
-            allStreams = allStreams.filter(function(s) {
-                // Generate a stable dedup key
-                var key = "";
-                if (s.infoHash) key = "ih:" + s.infoHash.toLowerCase();
-                else if (s.url) {
-                    var u = s.url.toLowerCase();
-                    // Extract infoHash from magnet URL
-                    var m = u.match(/urn:btih:([a-f0-9]+)/);
-                    if (m) key = "ih:" + m[1];
-                    else key = "url:" + u;
-                }
-                if (!key) return true;
-                if (seen[key]) return false;
-                seen[key] = true;
-                return true;
-            });
-
-            // ── Sort: quality first, then addon priority within same quality ──
-            var qOrder = { "4K": 0, "2160p": 0, "1440p": 1, "1080p": 2, "720p": 3, "480p": 4, "360p": 5, "YouTube": 6, "Auto": 7 };
-            allStreams.sort(function(a, b) {
-                var qa = qOrder[a.quality] !== undefined ? qOrder[a.quality] : 7;
-                var qb = qOrder[b.quality] !== undefined ? qOrder[b.quality] : 7;
-                if (qa !== qb) return qa - qb; // higher quality first
-                // Same quality: higher priority addon first
-                var pa = a._priority !== undefined ? a._priority : 999;
-                var pb = b._priority !== undefined ? b._priority : 999;
-                if (pa !== pb) return pa - pb;
-                if (a.cached && !b.cached) return -1;
-                if (!a.cached && b.cached) return 1;
-                return 0;
-            });
-            // Strip internal priority tags before returning
-            allStreams.forEach(function(s) { delete s._priority; });
-
-            var elapsed = Date.now() - startTime;
-            slog("info", "Found " + allStreams.length + " unique streams for " + idsToTry[0] + " in " + elapsed + "ms");
-
-            // ── Attach external subtitles ──
-            var externalSubs = await subtitlePromise;
-            if (externalSubs && externalSubs.length > 0 && allStreams.length > 0) {
-                for (var si = 0; si < allStreams.length; si++) {
-                    var st = allStreams[si];
-                    if (!st.subtitles || st.subtitles.length === 0) {
-                        st.subtitles = externalSubs;
-                    } else {
-                        var existingUrls = {};
-                        for (var ei = 0; ei < st.subtitles.length; ei++) {
-                            if (st.subtitles[ei].url) existingUrls[st.subtitles[ei].url] = true;
-                        }
-                        for (var si2 = 0; si2 < externalSubs.length; si2++) {
-                            if (!existingUrls[externalSubs[si2].url]) {
-                                st.subtitles.push(externalSubs[si2]);
+                    if (extraStreams.length) {
+                        // Merge new streams in priority order
+                        var newStreams = [];
+                        for (var ai = 0; ai < sAddons.length; ai++) {
+                            if (addonStreams[ai]) {
+                                newStreams = newStreams.concat(addonStreams[ai].streams);
                             }
                         }
+                        allStreams = newStreams;
                     }
+                } catch (e) { /* phase 2 is best-effort */ }
+            }
+
+            // Collect videoHash/videoSize from all streams for subtitle matching
+            var streamHints = {};
+            for (var si = 0; si < allStreams.length; si++) {
+                var bh = allStreams[si].behaviorHints || {};
+                if (bh.videoHash && !streamHints.videoHash) streamHints.videoHash = bh.videoHash;
+                if (bh.videoSize && !streamHints.videoSize) streamHints.videoSize = bh.videoSize;
+            }
+
+            // Step 3: Fetch subtitles with videoHash/videoSize matching
+            var subtitles = await fetchSubtitles(metaId, typeStr, season, episode, streamHints);
+
+            // Step 4: Attach subtitles
+            if (subtitles.length && allStreams.length) {
+                for (var si = 0; si < allStreams.length; si++) {
+                    try {
+                        var existing = allStreams[si].subtitles || [];
+                        if (!Array.isArray(existing)) existing = [];
+                        var subMap = {};
+                        for (var xi = 0; xi < existing.length; xi++) if (existing[xi]) subMap[existing[xi].url] = true;
+                        for (var ni = 0; ni < subtitles.length; ni++) {
+                            if (subtitles[ni] && subtitles[ni].url && !subMap[subtitles[ni].url]) {
+                                existing.push(subtitles[ni]);
+                                subMap[subtitles[ni].url] = true;
+                            }
+                        }
+                        allStreams[si].subtitles = existing;
+                    } catch (e) {}
                 }
             }
 
-            // ── Cache ──
-            streamResultCache[cacheKey] = { ts: Date.now(), data: allStreams };
-            var keys = Object.keys(streamResultCache);
-            if (keys.length > 100) {
-                var sorted = keys.sort(function(a, b) { return streamResultCache[a].ts - streamResultCache[b].ts; });
-                for (var i = 0; i < sorted.length - 100; i++) delete streamResultCache[sorted[i]];
+            // Step 5: Quality sort within each addon's streams, then merge by priority
+            var finalStreams = [];
+            for (var ai = 0; ai < sAddons.length; ai++) {
+                if (addonStreams[ai]) {
+                    var sorted = addonStreams[ai].streams.slice().sort(function(a, b) {
+                        return (b._sortKey || 0) - (a._sortKey || 0);
+                    });
+                    finalStreams = finalStreams.concat(sorted);
+                }
             }
 
-            cb({ success: true, data: allStreams });
+            // Step 6: Deduplicate
+            var seen = {};
+            var deduped = [];
+            for (var i = 0; i < finalStreams.length; i++) {
+                var key = finalStreams[i].infoHash || finalStreams[i].url;
+                if (key && !seen[key]) { seen[key] = true; deduped.push(finalStreams[i]); }
+            }
+
+            // Clean up internal _sortKey before returning
+            for (var i = 0; i < deduped.length; i++) {
+                if (deduped[i]._sortKey !== undefined) delete deduped[i]._sortKey;
+            }
+
+            cb({ success: true, data: deduped });
         } catch (e) {
-            slog("error", "loadStreams error: " + (e.message || e));
-            // Never fail — always return something
-            cb({ success: true, data: [] });
+            console.error("[Hub] loadStreams:", e.message || e);
+            cb({ success: false, errorCode: "STREAM_ERROR", message: e.message || "Error" });
         }
     }
 
-    // ============================================================
-    //  EXPORTS
-    // ============================================================
+    // ════════════════════════════════════════════════════════════════
+    //  Exports
+    // ════════════════════════════════════════════════════════════════
     globalThis.getHome = getHome;
     globalThis.search = search;
     globalThis.load = load;
     globalThis.loadStreams = loadStreams;
 
-    console.log("[TMDB+Stremio] Plugin loaded. TMDB catalog UI + Stremio addon streams ready.");
 })();
