@@ -1,0 +1,37 @@
+{
+  "packageName": "dev.sunriseve.NuvioBridge",
+  "name": "Nuvio Bridge",
+  "version": 10,
+  "baseUrl": "https://skystream-local",
+  "description": "Unified v9: Stremio catalog-driven UI (home/search/load). loadStreams queries both IMDB (Stremio addons) and TMDB (Nuvio providers) for maximum stream coverage.",
+  "authors": ["sunriseve"],
+  "languages": ["en", "hi", "ta", "te", "ml", "kn", "ar", "fr", "es", "pt", "ja", "ko", "zh", "de", "it", "pl", "tr"],
+  "categories": ["Movie", "TvSeries", "Anime"],
+  "nuvioManifests": [
+    "https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/phisher98/phisher-nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/michat88/nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/PirateZoro9/nuvio-kabir-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/hihihihihiiray/plugins/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/Abinanthankv/NuvioRepo/refs/heads/master/manifest.json",
+    "https://raw.githubusercontent.com/mooncrown04/nuviotr/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/nvmindl/nuvio-providers/refs/heads/main/manifest.json"
+  ],
+  "catalogueAddons": [
+    "https://83e20802dcf1-indian-streams.baby-beamup.club/eyJjYXRhbG9ncyI6WyJ0ZSIsImhpIiwiaGluZGlfZHViYmVkIiwidGEiLCJtbCIsImtuIiwiYm4iLCJtciIsImd1IiwicGEiLCJ0ZV9zZXJpZXMiLCJoaV9zZXJpZXMiLCJ0YV9zZXJpZXMiLCJtbF9zZXJpZXMiLCJrbl9zZXJpZXMiLCJibl9zZXJpZXMiLCJtcl9zZXJpZXMiLCJndV9zZXJpZXMiLCJwYV9zZXJpZXMiLCJvdHRfcmVsZWFzZXMiXSwiaW5jbHVkZVRoZWF0cmljYWwiOnRydWV9/manifest.json",
+    "https://tmdb-discover-plus.elfhosted.com/FM7qBe2i25/manifest.json",
+    "https://indiastreams.rdata.in/manifest.json"
+  ],
+  "streamingAddons": [
+    "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
+    "https://hdhub.thevolecitor.qzz.io/eyJ0b3Jib3giOiJ1bnNldCIsInF1YWxpdGllcyI6IjIxNjBwLDEwODBwLDcyMHAiLCJzb3J0IjoiZGVzYyJ9/manifest.json",
+    "https://tstrm.org/manifest.json",
+    "https://stremify.hayd.uk/YnVpbHQtaW4sZHJhbWFjb29sLGRyYW1hY29vbF9jYXRhbG9nLGdvZ29hbmltZSxnb2dvYW5pbWVfY2F0YWxvZw==/manifest.json",
+    "https://nagare.nexioapp.org/%7B%22NexioNagare%22%3A%22eyJ1c2VFbmdsaXNoVGl0bGVzIjp0cnVlLCJwcmVmZXJEdWIiOnRydWUsInByb3ZpZGVycyI6WyJvbmV0d290aHJlZWFuaW1lIiwiYW5pem9uZSIsImFuaW1lbm9zdWIiLCJhbmltZXBhaGUiLCJnb2dvIl0sInJlc29sdXRpb25zIjpbIjRLIiwiMTA4MHAiLCI3MjBwIiwiNDgwcCIsImF1dG8iXSwic2hvd1NlYXNvbmFsU2VyaWVzIjp0cnVlLCJzaG93QWlyaW5nU2VyaWVzIjp0cnVlLCJzaG93VHJlbmRpbmdTZXJpZXMiOnRydWUsInNob3dUb3BTZXJpZXMiOnRydWUsInNob3dUcmVuZGluZ01vdmllcyI6dHJ1ZSwic2hvd1RvcE1vdmllcyI6dHJ1ZX0%22%7D/manifest.json"
+  ],
+  "subtitlesAddons": [
+    "https://subsource.strem.top/manifest.json",
+    "https://opensubtitlesv3-pro.dexter21767.com/manifest.json"
+  ]
+}
