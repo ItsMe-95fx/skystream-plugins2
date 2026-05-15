@@ -3,7 +3,7 @@
   "name": "NuvioBridge",
   "version": 1,
   "baseUrl": "https://skystream-local",
-  "description": "Ultimate Nuvio-Only plugin: 150+ streaming providers, TMDB catalog discovery, multilingual subtitle support. Zero Stremio addon dependencies — pure Nuvio power.",
+  "description": "Ultimate Nuvio-Only plugin: 150+ streaming providers",
   "authors": ["Cookie\ud83c\udf6a"],
   "languages": ["en", "hi", "ta", "te", "ml"],
   "categories": ["Movie", "TvSeries", "Anime"],
