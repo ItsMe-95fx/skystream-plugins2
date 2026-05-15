@@ -1,0 +1,33 @@
+{
+  "packageName": "dev.nuviohub.ultimate",
+  "name": "Nuvio Hub Ultimate",
+  "version": 1,
+  "baseUrl": "https://skystream-local",
+  "description": "Ultimate Nuvio-Only plugin: 150+ streaming providers, TMDB catalog discovery, multilingual subtitle support. Zero Stremio addon dependencies — pure Nuvio power.",
+  "authors": ["NuvioHub"],
+  "languages": ["en", "hi", "ta", "te", "ml", "kn", "bn", "mr", "gu", "pa", "ur", "ar", "fr", "es", "pt", "ja", "ko", "zh", "de", "it", "pl", "tr", "th", "vi", "ru", "nl", "ro", "el"],
+  "categories": ["Movie", "TvSeries", "Anime"],
+  "nuvioManifests": [
+    "https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/phisher98/phisher-nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/michat88/nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/PirateZoro9/nuvio-kabir-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/hihihihihiiray/plugins/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/Abinanthankv/NuvioRepo/refs/heads/master/manifest.json",
+    "https://raw.githubusercontent.com/mooncrown04/nuviotr/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/nvmindl/nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/SexyNinja/Nuvio-Provider/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/KingLuffy24/nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/ang3lyunus/nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/iberiaimm/nuvio-providers/refs/heads/main/manifest.json"
+  ],
+  "catalogueAddons": [
+    "https://tmdb-discover-plus.elfhosted.com/FM7qBe2i25/manifest.json",
+    "https://83e20802dcf1-indian-streams.baby-beamup.club/eyJjYXRhbG9ncyI6WyJ0ZSIsImhpIiwiaGluZGlfZHViYmVkIiwidGEiLCJtbCIsImtuIiwiYm4iLCJtciIsImd1IiwicGEiLCJ0ZV9zZXJpZXMiLCJoaV9zZXJpZXMiLCJ0YV9zZXJpZXMiLCJtbF9zZXJpZXMiLCJrbl9zZXJpZXMiLCJibl9zZXJpZXMiLCJtcl9zZXJpZXMiLCJndV9zZXJpZXMiLCJwYV9zZXJpZXMiLCJvdHRfcmVsZWFzZXMiXSwiaW5jbHVkZVRoZWF0cmljYWwiOnRydWV9/manifest.json",
+    "https://indiastreams.rdata.in/manifest.json",
+    "https://v3-cinemeta.strem.io/manifest.json",
+    "https://stremio-addons.cyou/stremio-dbpedia-addon/OThlZjhkYjYxM2IyNjI4YjBiYzI0MDE1ZmI5YjI2Zjk/manifest.json"
+  ],
+  "subtitlesAddons": []
+}
