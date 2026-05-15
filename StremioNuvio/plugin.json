@@ -1,6 +1,6 @@
 {
-  "packageName": "dev.sunriseve.NuvioBridge",
-  "name": "Nuvio Bridge",
+  "packageName": "dev.sunriseve.StremioNuvio",
+  "name": "StremioNuvio",
   "version": 10,
   "baseUrl": "https://skystream-local",
   "description": "Unified v9: Stremio catalog-driven UI (home/search/load). loadStreams queries both IMDB (Stremio addons) and TMDB (Nuvio providers) for maximum stream coverage.",
