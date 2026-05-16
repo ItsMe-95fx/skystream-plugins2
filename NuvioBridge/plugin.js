@@ -5,7 +5,7 @@
   //
   // FEATURES:
   //  • Nuvio provider discovery from multiple manifests (150+ providers)
-  //  • Stremio addon support (catalogueAddons, streamingAddons, subtitlesAddons)
+  //  • Stremio addon support (catalogueAddons, streamingAddons)
   //  • getHome: Stremio catalogs (catalogueAddons)
   //  • search: Stremio catalog search
   //  • load: Stremio metadata + episode listing
@@ -25,10 +25,7 @@
     try { if (manifest && Array.isArray(manifest.streamingAddons)) return manifest.streamingAddons; } catch (e) {}
     return [];
   }
-  function getSubtitlesAddons() {
-    try { if (manifest && Array.isArray(manifest.subtitlesAddons)) return manifest.subtitlesAddons; } catch (e) {}
-    return [];
-  }
+
 
   // --- Nuvio manifest sources from plugin.json ---
   function deriveSourceFromUrl(url) {
@@ -792,39 +789,6 @@
   }
 
   // ===========================================================================
-  // STREMIO SUBTITLE FETCHING
-  // ===========================================================================
-
-  function fetchSubtitles(id, typeStr, season, episode, streamHints) {
-    var urls = getSubtitlesAddons();
-    if (!urls.length) return Promise.resolve([]);
-    var subId = (typeStr === 'series' && season > 0 && episode > 0) ? id + ':' + season + ':' + episode : id;
-    var eid = encodeURIComponent(subId);
-    var subUrls = [];
-    for (var i = 0; i < urls.length; i++) {
-      var bu = baseUrl(urls[i]);
-      if (typeStr === 'series' && season > 0 && episode > 0) subUrls.push(bu + '/subtitles/' + typeStr + '/' + eid + '.json');
-      subUrls.push(bu + '/subtitles/' + typeStr + '/' + encodeURIComponent(id) + '.json');
-      if (streamHints && streamHints.videoHash) subUrls.push(bu + '/subtitles/' + typeStr + '/' + encodeURIComponent(id) + '.json?videoHash=' + encodeURIComponent(streamHints.videoHash) + '&videoSize=' + (streamHints.videoSize || ''));
-    }
-    if (!subUrls.length) return Promise.resolve([]);
-    return httpBatch(subUrls).then(function(results) {
-      var allSubs = [], seen = {};
-      for (var ri = 0; ri < results.length; ri++) {
-        var sr = results[ri];
-        if (!sr.ok || !sr.data || !Array.isArray(sr.data.subtitles)) continue;
-        for (var si = 0; si < sr.data.subtitles.length; si++) {
-          var sub = sr.data.subtitles[si];
-          if (!sub || !sub.url) continue;
-          var sk = sub.url + '|' + (sub.lang || '');
-          if (!seen[sk]) { seen[sk] = true; allSubs.push({ id: sub.id || String(allSubs.length + 1), url: sub.url, lang: normLang(sub.lang), label: sub.label || normLang(sub.lang) || 'Unknown' }); }
-        }
-      }
-      return allSubs;
-    });
-  }
-
-  // ===========================================================================
   // STREMIO META → MULTIMEDIA ITEM
   // ===========================================================================
 
@@ -860,15 +824,18 @@
   function parseVideoId(raw) {
     if (!raw) return null;
     var p = safeJson(raw, null);
-    if (p && p.i !== undefined) return { id: str(p.i), type: p.t || 'movie', season: p.s || 0, episode: p.e || 0 };
-    if (p && p.tmdbId !== undefined) return { id: str(p.tmdbId), type: p.mediaType || 'movie', season: p.seasonNumber || 0, episode: p.episodeNumber || 0 };
+    if (p && p.i !== undefined) return { id: str(p.i), type: p.t || null, season: p.s || 0, episode: p.e || 0 };
+    if (p && p.tmdbId !== undefined) return { id: str(p.tmdbId), type: p.mediaType || null, season: p.seasonNumber || 0, episode: p.episodeNumber || 0 };
     if (raw.indexOf(':') !== -1) {
       var parts = raw.split(':');
       var first = parts[0];
       if (/^tt\d+$/.test(first) && parts.length >= 3) { var sn = parseInt(parts[1], 10); var en = parseInt(parts[2], 10); return { id: first, type: 'series', season: isNaN(sn) ? 0 : sn, episode: isNaN(en) ? 0 : en }; }
       if (first.indexOf('_') !== -1 || first.indexOf('-') !== -1) return { id: raw, type: 'series', season: 0, episode: 0 };
+      // Service-prefixed ID like "kitsu:7442" or "tmdb:1234" — don't guess type
+      if (/^[a-zA-Z]+$/.test(first) && parts.length >= 2) return { id: raw, type: null, season: 0, episode: 0 };
     }
-    return { id: raw, type: 'movie', season: 0, episode: 0 };
+    // Bare ID — type unknown, let load() try all types
+    return { id: raw, type: null, season: 0, episode: 0 };
   }
 
   // ===========================================================================
@@ -1108,23 +1075,44 @@
       for (var ri = 0; ri < metaResults.length; ri++) {
         var mr = metaResults[ri];
         if (!mr.ok || !mr.data) continue;
-        if (mr.data.meta && mr.data.meta.id) { foundMeta = mr.data.meta; break; }
-        if (Array.isArray(mr.data.metas) && mr.data.metas.length && mr.data.metas[0].id) { foundMeta = mr.data.metas[0]; break; }
+        var metaInfoEntry = metaInfo[ri];
+        var isNonMovie = metaInfoEntry && metaInfoEntry.type !== 'movie';
+        if (mr.data.meta && mr.data.meta.id) {
+          // Prefer non-movie results (series/anime/tv) — movie addons often return
+          // fallback data for unknown IDs, overriding the correct series metadata
+          if (isNonMovie) { foundMeta = mr.data.meta; break; }
+          if (!foundMeta) foundMeta = mr.data.meta;
+        }
+        if (Array.isArray(mr.data.metas) && mr.data.metas.length && mr.data.metas[0].id) {
+          if (isNonMovie) { foundMeta = mr.data.metas[0]; break; }
+          if (!foundMeta) foundMeta = mr.data.metas[0];
+        }
       }
 
       if (foundMeta) {
+        // Derive a TMDB-friendly ID for stream pre-fetching
+        var streamPrefetchId = metaId;
+        if (foundMeta.imdb_id && /^tt\d+$/i.test(foundMeta.imdb_id)) streamPrefetchId = foundMeta.imdb_id;
+        else if (foundMeta.id && /^tt\d+$/i.test(foundMeta.id)) streamPrefetchId = foundMeta.id;
         respondMeta(foundMeta, metaId, cb);
+
+        // Pre-fetch streams using TMDB-friendly ID for Nuvio compatibility
+        try {
+          loadStreams(streamPrefetchId, function() {
+            pCacheSet('streams:' + metaId, arguments[0]);
+          });
+        } catch (e) { /* pre-fetch is best-effort */ }
       } else {
         var isSeries = (knownType === 'series' || knownType === 'anime' || knownType === 'tv' || knownType === 'channel');
         respondMeta({ name: 'Content', id: metaId, type: isSeries ? 'series' : 'movie' }, metaId, cb);
-      }
 
-      // Pre-fetch streams in background — don't block the callback
-      try {
-        loadStreams(rawInput, function() {
-          pCacheSet('streams:' + metaId, arguments[0]);
-        });
-      } catch (e) { /* pre-fetch is best-effort */ }
+        // Pre-fetch streams in background
+        try {
+          loadStreams(rawInput, function() {
+            pCacheSet('streams:' + metaId, arguments[0]);
+          });
+        } catch (e) { /* pre-fetch is best-effort */ }
+      }
     } catch (e) {
       warn('load error: ' + (e.message || e));
       try { respondMeta({ name: 'Unknown', id: rawInput, type: 'movie' }, rawInput, cb); } catch (f) {
@@ -1141,17 +1129,24 @@
       var s = parseRating(meta);
       var desc = str(meta.description || meta.overview || meta.synopsis || '').replace(/<[^>]*>/g, '').trim();
       var eps = [], isSeries = (st !== 'movie');
+
+      // Derive a TMDB/IMDB-friendly ID for episode URLs so loadStreams can
+      // resolve to TMDB for Nuvio providers. Priority: explicit imdb_id > tt-prefixed id > original
+      var streamId = metaId;
+      if (meta.imdb_id && /^tt\d+$/i.test(meta.imdb_id)) streamId = meta.imdb_id;
+      else if (meta.id && /^tt\d+$/i.test(meta.id)) streamId = meta.id;
+
       if (isSeries && Array.isArray(meta.videos) && meta.videos.length) {
         for (var vi = 0; vi < meta.videos.length; vi++) {
           try {
             var v = meta.videos[vi];
             if (!v || !v.id) continue;
             var sn = v.season || 1, en = v.episode || v.number || 1;
-            eps.push(new Episode({ name: v.name || v.title || 'Episode ' + en, url: metaId + ':' + sn + ':' + en, season: sn, episode: en, posterUrl: v.thumbnail || v.poster || meta.poster || '', description: v.overview || v.description || '', airDate: v.released || v.firstAired || '' }));
+            eps.push(new Episode({ name: v.name || v.title || 'Episode ' + en, url: streamId + ':' + sn + ':' + en, season: sn, episode: en, posterUrl: v.thumbnail || v.poster || meta.poster || '', description: v.overview || v.description || '', airDate: v.released || v.firstAired || '' }));
           } catch (e) {}
         }
       }
-      if (!eps.length) { var vid = isSeries ? (metaId + ':1:1') : metaId; eps.push(new Episode({ name: st === 'movie' ? 'Full Movie' : 'Watch', url: vid, season: 1, episode: 1, posterUrl: meta.poster || '' })); }
+      if (!eps.length) { var vid = isSeries ? (streamId + ':1:1') : streamId; eps.push(new Episode({ name: st === 'movie' ? 'Full Movie' : 'Watch', url: vid, season: 1, episode: 1, posterUrl: meta.poster || '' })); }
       var cast = undefined;
       if (Array.isArray(meta.cast) && meta.cast.length) {
         cast = [];
@@ -1176,7 +1171,10 @@
     } catch (e) {
       console.error('[' + TAG + '] respondMeta:', e.message);
       var ft = skyType(meta.type || 'movie');
-      cb({ success: true, data: new MultimediaItem({ title: meta.name || meta.title || 'Unknown', url: metaId, type: ft, episodes: [new Episode({ name: 'Play', url: ft === 'movie' ? metaId : metaId + ':1:1', season: 1, episode: 1 })] })});
+      var fallbackStreamId = metaId;
+      if (meta.imdb_id && /^tt\d+$/i.test(meta.imdb_id)) fallbackStreamId = meta.imdb_id;
+      else if (meta.id && /^tt\d+$/i.test(meta.id)) fallbackStreamId = meta.id;
+      cb({ success: true, data: new MultimediaItem({ title: meta.name || meta.title || 'Unknown', url: metaId, type: ft, episodes: [new Episode({ name: 'Play', url: ft === 'movie' ? fallbackStreamId : fallbackStreamId + ':1:1', season: 1, episode: 1 })] })});
     }
   }
 
@@ -1190,7 +1188,7 @@
       var key = cacheKey(url);
       if (_streamCache[key]) { log('Cache hit: ' + _streamCache[key].length + ' streams'); return cb({ success: true, data: _streamCache[key] }); }
       var typeStr = (nuvioP.mediaType === 'tv') ? 'series' : 'movie';
-      fetchNuvioOnlyStreams(nuvioP.tmdbId, typeStr, nuvioP.season || 0, nuvioP.episode || 0).then(function(streams) {
+      fetchAllStreams(nuvioP.tmdbId, typeStr, nuvioP.season || 0, nuvioP.episode || 0).then(function(streams) {
         _streamCache[key] = streams;
         log('loadStreams returning ' + streams.length + ' streams');
         cb({ success: true, data: streams });
@@ -1232,12 +1230,14 @@
       var imdbId = imdbMatch[1];
       season = parseInt(imdbMatch[2], 10) || 0;
       episode = parseInt(imdbMatch[3], 10) || 0;
-      typeStr = (season || episode) ? 'series' : 'movie';
       var cached = pCacheGet('streams:' + imdbId);
       if (cached && cached.success && cached.data && cached.data.length) { cb({ success: true, data: cached.data }); return; }
       tmdbFind(imdbId, 'imdb_id').then(function(found) {
         var tid = found ? found.tmdbId : null;
-        return fetchNuvioOnlyStreams(tid, typeStr, season, episode);
+        // Use TMDB-resolved type (tv/movie) instead of guessing from season/episode
+        var resolvedType = found ? found.type : null;
+        var finalType = (resolvedType === 'tv') ? 'series' : (season || episode) ? 'series' : 'movie';
+        return fetchAllStreams(tid, finalType, season, episode);
       }).then(function(streams) {
         pCacheSet('streams:' + imdbId, { success: true, data: streams });
         log('loadStreams returning ' + streams.length + ' streams');
@@ -1246,7 +1246,23 @@
       return;
     }
 
-    // Fallback: use whatever we extracted
+    // Fallback: resolve non-TMDB IDs through TMDB if possible
+    function resolveAndFetch(id, type, s, e) {
+      // If it's an IMDB-looking ID, try TMDB resolution first
+      if (/^tt\d+$/i.test(id)) {
+        tmdbFind(id, 'imdb_id').then(function(found) {
+          var tid = found ? found.tmdbId : id;
+          var resolvedType = found ? found.type : type;
+          var ft = (resolvedType === 'tv') ? 'series' : (s || e) ? 'series' : 'movie';
+          return fetchAllStreams(tid, ft, s, e);
+        }).then(handleResult).catch(function() {
+          fetchAllStreams(id, type, s, e).then(handleResult).catch(function(e2) { warn('loadStreams error: ' + (e2.message || e2)); cb({ success: true, data: [] }); });
+        });
+      } else {
+        fetchAllStreams(id, type, s, e).then(handleResult).catch(function(e2) { warn('loadStreams error: ' + (e2.message || e2)); cb({ success: true, data: [] }); });
+      }
+    }
+
     if (!tmdbId) {
       var vp = parseVideoId(raw);
       if (vp) { tmdbId = vp.id; typeStr = (vp.type === 'tv' || vp.type === 'series' || vp.type === 'anime') ? 'series' : 'movie'; season = vp.season || 0; episode = vp.episode || 0; }
@@ -1257,18 +1273,23 @@
     var cached2 = pCacheGet(cacheKey2);
     if (cached2 && cached2.success && cached2.data && cached2.data.length) { cb({ success: true, data: cached2.data }); return; }
 
-    fetchNuvioOnlyStreams(tmdbId, typeStr, season, episode).then(function(streams) {
+    function handleResult(streams) {
       pCacheSet(cacheKey2, { success: true, data: streams });
       log('loadStreams returning ' + streams.length + ' streams');
       cb({ success: true, data: streams });
-    }).catch(function(e) { warn('loadStreams error: ' + (e.message || e)); cb({ success: true, data: [] }); });
+    }
+
+    resolveAndFetch(tmdbId, typeStr, season, episode);
   }
 
-  function fetchNuvioOnlyStreams(tmdbId, typeStr, season, episode) {
+  function fetchAllStreams(tmdbId, typeStr, season, episode) {
     if (!tmdbId) return Promise.resolve([]);
     var nuvioType = (typeStr === 'series') ? 'tv' : typeStr;
     var promises = [];
+    // Fetch from Nuvio providers
     promises.push(fetchNuvioStreams(tmdbId, nuvioType, season, episode).catch(function() { return []; }));
+    // Also fetch from Stremio streaming addons (was previously unused dead code)
+    promises.push(fetchStremioStreams(tmdbId, typeStr, season, episode).catch(function() { return []; }));
     return Promise.all(promises).then(function(results) {
       var combined = [];
       for (var ri = 0; ri < results.length; ri++) combined = combined.concat(results[ri]);
@@ -1303,5 +1324,5 @@
   globalThis.load = load;
   globalThis.loadStreams = loadStreams;
 
-  log('Plugin v7 loaded — ' + NUVIO_SOURCES.length + ' Nuvio sources, ' + getCatalogueAddons().length + ' Stremio catalog addons, ' + getStreamingAddons().length + ' Stremio streaming addons, ' + getSubtitlesAddons().length + ' subtitle addons');
+  log('Plugin v7 loaded — ' + NUVIO_SOURCES.length + ' Nuvio sources, ' + getCatalogueAddons().length + ' Stremio catalog addons, ' + getStreamingAddons().length + ' Stremio streaming addons');
 })();
