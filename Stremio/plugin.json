@@ -14,11 +14,7 @@
     "https://indiastreams.rdata.in/manifest.json"
   ],
   "streamingAddons": [
-    "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
-    "https://hdhub.thevolecitor.qzz.io/eyJ0b3Jib3giOiJ1bnNldCIsInF1YWxpdGllcyI6IjIxNjBwLDEwODBwLDcyMHAiLCJzb3J0IjoiZGVzYyJ9/manifest.json",
-    "https://tstrm.org/manifest.json",
-    "https://stremify.hayd.uk/YnVpbHQtaW4sZHJhbWFjb29sLGRyYW1hY29vbF9jYXRhbG9nLGdvZ29hbmltZSxnb2dvYW5pbWVfY2F0YWxvZw==/manifest.json",
-    "https://nagare.nexioapp.org/%7B%22NexioNagare%22%3A%22eyJ1c2VFbmdsaXNoVGl0bGVzIjp0cnVlLCJwcmVmZXJEdWIiOnRydWUsInByb3ZpZGVycyI6WyJvbmV0d290aHJlZWFuaW1lIiwiYW5pem9uZSIsImFuaW1lbm9zdWIiLCJhbmltZXBhaGUiLCJnb2pvIl0sInJlc29sdXRpb25zIjpbIjRLIiwiMTA4MHAiLCI3MjBwIiwiNDgwcCIsImF1dG8iXSwic2hvd1NlYXNvbmFsU2VyaWVzIjp0cnVlLCJzaG93QWlyaW5nU2VyaWVzIjp0cnVlLCJzaG93VHJlbmRpbmdTZXJpZXMiOnRydWUsInNob3dUb3BTZXJpZXMiOnRydWUsInNob3dUcmVuZGluZ01vdmllcyI6dHJ1ZSwic2hvd1RvcE1vdmllcyI6dHJ1ZX0%22%7D/manifest.json"
+    "https://nebulastreams.onrender.com/manifest.json",
   ],
   "subtitlesAddons": [
     "https://subsource.strem.top/manifest.json",
