@@ -9,8 +9,7 @@
   "categories": ["Movies", "TV", "Anime", "Indian"],
 
   "catalogueAddons": [
-    "https://animestream-addon.keypop3750.workers.dev/sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,a_dub,a_sub,q_720,q_480,n_2/manifest.json",
-    "https://v3-cinemeta.strem.io/manifest.json"
+    ""
   ],
 
   "streamingAddons": [
@@ -25,7 +24,7 @@
     "https://vidfast-stremio-addon.zmoualhi.workers.dev/manifest.json",
     "https://ytztvio.galacticcapsule.workers.dev/manifest.json",
     "https://stremio-animepahe.tsz1da2a.workers.dev/manifest.json",
-    "https://animestream-addon.keypop3750.workers.dev/manifest.json",
+    "https://animestream-addon.keypop3750.workers.dev/sm=https|sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,a_dub,a_sub,q_720,q_480,n_2/manifest.json",
     "https://yastream.tamthai.de/manifest.json",
     "https://watcho3.rafaelzioneverest.workers.dev/manifest.json",
     "https://flixnest.app/flix-finder/eyJxdWFsaXR5IjpbIjEwODBwIiwiNzIwcCJdfQ/manifest.json",
