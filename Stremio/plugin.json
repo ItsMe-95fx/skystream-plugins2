@@ -9,12 +9,7 @@
   "categories": ["Movies", "TV", "Anime", "Indian"],
 
   "catalogueAddons": [
-    "https://v3-cinemeta.strem.io/manifest.json",
-    "https://tmdb.elfhosted.com/N4IgTgDgJgRgsgUygSwIYBUCeEEGcQBcoEA9rgC4JiHlgCuCANCADYkDmJhAZqi7kxAxUAYwDWUMCQg8+AgL7NyAW1gBBCMgDSCTIRAA2ABwIADAE4ALAfPmArACY7MAIxHUAdlPCYD7kYNXXi8DEGYIKQA3ZCgEAElVGDiofVoGMPAEcjowADsE2GTU+gQMlVgABTAEbmQAD2L05hZUXPY6VHZSghBKAFo4gDkMimrUZWQ2wgBtAF1mEVRyPg58AmnQGNTEgDoWygoy7G6QZRJo0uZc8ZOAGSW8cgACACUEFgRUAXxmXAALEgAdziuQAEiRlN00ghFJsUj1yjA9g9DkpjvoBGBkHgMtdIfp7gdnm8Pl8cb8AcCwRCoSVYSAtgjdrQELkUFM0Th9GcLribvp0NU2ZN2CNKSDwfiCND6YzesyhezRZyTpjsT8QHiToLWUqxUCJTSaHTGHDtrAduRpEcuT0edi+VKQBVpHQWtQKQbqVKZaaGfD5RarTIVRiqOrHScXRA3agPSB-l7JbSGLKA4idphPvHyOi7ecHVd+T0AJrZ-VU5PG1N+uUZrNxm2q8PkzXFkBlxueytG6Ums1Mi0tNodLpN7kFy5tp33EedKeJns+v+81I4ftefjnpq1tagmtTdj7uG5ep+YgP4xeK5ADCkwQygwnUaU8WFFvJDouXIhDs3bULoXiWEUQQAcVZao1l6EoMlZVAYA+QCEGA8gRX0Xh+AXSlkNQkUAHVkHIP4ChgPCph6TCBBGWhkBEcg3nYZASFyAAxZAWEoahKLkKcUCY5YWBJT4BHYziqGrGEgA/manifest.json",
-    "https://watchhub-us.strem.io/manifest.json",
-    "https://83e20802dcf1-indian-streams.baby-beamup.club/eyJjYXRhbG9ncyI6WyJ0ZSIsImhpIiwiaGluZGlfZHViYmVkIiwidGEiLCJtbCIsImtuIiwiYm4iLCJtciIsImd1IiwicGEiLCJ0ZV9zZXJpZXMiLCJoaV9zZXJpZXMiLCJ0YV9zZXJpZXMiLCJtbF9zZXJpZXMiLCJrbl9zZXJpZXMiLCJibl9zZXJpZXMiLCJtcl9zZXJpZXMiLCJndV9zZXJpZXMiLCJwYV9zZXJpZXMiLCJvdHRfcmVsZWFzZXMiXSwiaW5jbHVkZVRoZWF0cmljYWwiOnRydWV9/manifest.json",
-    "https://7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club/bmZ4LGRucCxhbXAsYXRwLGhibSxjcnUsc29ueWxpdixqaHMsemVlOjpJTjoxNzc4OTQzNzk2NjUyOjA6MDo%3D/manifest.json",
-    "https://indiastreams.rdata.in/manifest.json"
+    "https://top-streaming.stream/ae4e5af7-3e2d-4bdb-a80f-116b12bab549/manifest.json",
   ],
 
   "streamingAddons": [
