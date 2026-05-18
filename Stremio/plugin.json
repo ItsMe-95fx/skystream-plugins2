@@ -9,32 +9,24 @@
   "categories": ["Movies", "TV", "Anime", "Indian"],
 
   "catalogueAddons": [
-    "https://7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club/bmZ4LGFtcCxhdHAsamhzLGNydSxzb255bGl2OjpJTjoxNzc5MDgxNzQ0MTA1OjA6MDo%3D/manifest.json",
-    "https://animestream-addon.keypop3750.workers.dev/sm=https|sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,a_dub,a_sub,q_720,q_480,n_2/manifest.json",
     "https://v3-cinemeta.strem.io/manifest.json"
   ],
 
   "streamingAddons": [
-    "https://streamvix.hayd.uk/manifest.json",
-    "https://streamvix.hayd.uk/%7B%22tmdbApiKey%22%3A%22%22%2C%22mediaFlowProxyUrl%22%3A%22%22%2C%22mediaFlowProxyPassword%22%3A%22%22%2C%22animeunityEnabled%22%3A%22on%22%2C%22animesaturnEnabled%22%3A%22on%22%2C%22animeworldEnabled%22%3A%22on%22%7D/manifest.json",
-    "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
-    "https://hdhub.thevolecitor.qzz.io/manifest.json",
-    "https://hdhub.thevolecitor.qzz.io/eyJ0b3Jib3giOiJ1bnNldCIsInF1YWxpdGllcyI6IjIxNjBwLDEwODBwLDcyMHAiLCJzb3J0IjoiZGVzYyJ9/manifest.json",
-    "https://dramayo.stream/manifest.json",
-    "https://stremio-dramacool-addon.xyz/manifest.json",
-    "https://stremify.elfhosted.com/manifest.json",
-    "https://vidfast-stremio-addon.zmoualhi.workers.dev/manifest.json",
-    "https://ytztvio.galacticcapsule.workers.dev/manifest.json",
-    "https://stremio-animepahe.tsz1da2a.workers.dev/manifest.json",
-    "https://animestream-addon.keypop3750.workers.dev/sm=https|sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,a_dub,a_sub,q_720,q_480,n_2/manifest.json",
-    "https://yastream.tamthai.de/manifest.json",
-    "https://watcho3.rafaelzioneverest.workers.dev/manifest.json",
-    "https://flixnest.app/flix-finder/eyJxdWFsaXR5IjpbIjEwODBwIiwiNzIwcCJdfQ/manifest.json",
-    "https://flixnest.app/flix-streams/manifest.json",
-    "https://autostreamtest.onrender.com/manifest.json",
-    "https://cinepro-addon.onrender.com/manifest.json",
-    "https://2ecbbd610840-napflix.baby-beamup.club/manifest.json",
-    "https://norsk-stream-hub.vercel.app/manifest.json",
-    "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex%7Csort=qualityseeders%7Cqualityfilter=1080p,720p,480p,4k%7Csizefilter=10GB/manifest.json"
+    "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/%7B%22multi%22%3A%22on%22%2C%22excludeResolution_Unknown%22%3A%22on%22%2C%22excludeResolution_144p%22%3A%22on%22%2C%22excludeResolution_240p%22%3A%22on%22%2C%22disableExtractor_youtube%22%3A%22on%22%7D/manifest.json",
+    "https://hdhub.thevolecitor.qzz.io/eyJ0b3Jib3giOiJ1bnNldCIsInF1YWxpdGllcyI6IjIxNjBwLDEwODBwLDcyMHAsNDgwcCIsInNvcnQiOiJhc2MiLCJtcSI6NSwibXAiOjEwfQ/manifest.json",
+    "https://badboysxs-morpheus.hf.space/bWIsbm0sZGYsaGgsa2gsa20sYXcsaG0/manifest.json",
+    "https://nebula.work.gd/configured/all/default/prefer-h264%2Cprefer-smaller-files%2Cprefer-direct-hosts%2Cdedupe%3Dsmart%2Cmax-size-gb%3D10/manifest.json",
+    "https://6172e63fd702-del-kdrama-series-movies.baby-beamup.club/manifest.json",
+
+
+    "https://nagare.nexioapp.org/%7B%22NexioNagare%22%3A%22eyJ1c2VFbmdsaXNoVGl0bGVzIjp0cnVlLCJwcmVmZXJEdWIiOnRydWUsInByb3ZpZGVycyI6WyJvbmV0d290aHJlZWFuaW1lIiwiYW5pem9uZSIsImFuaW1lbm9zdWIiLCJhbmltZXBhaGUiLCJnb2pvIl0sInJlc29sdXRpb25zIjpbIjEwODBwIiwiNzIwcCIsIjQ4MHAiXSwic2hvd1NlYXNvbmFsU2VyaWVzIjpmYWxzZSwic2hvd0FpcmluZ1NlcmllcyI6ZmFsc2UsInNob3dUcmVuZGluZ1NlcmllcyI6ZmFsc2UsInNob3dUb3BTZXJpZXMiOmZhbHNlLCJzaG93VHJlbmRpbmdNb3ZpZXMiOmZhbHNlLCJzaG93VG9wTW92aWVzIjpmYWxzZX0%22%7D/manifest.json",
+
+
+
+    "https://sword-watch.vercel.app/manifest.json",
+    "https://dev-streamz-navy.vercel.app/manifest.json"
+
+    
   ]
 }
