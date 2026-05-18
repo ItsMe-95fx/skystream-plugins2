@@ -1,6 +1,6 @@
 {
   "packageName": "dev.sunriseve.stremio",
-  "name": "Stremio Hub v5",
+  "name": "Stremio",
   "version": 5,
   "baseUrl": "https://stremio-hub.local",
   "description": "Aggregator for 22 curated HTTP streaming addons (English & Indian content) + high-speed torrent addons. HTTP sources prioritized for instant direct streaming. v5.4 — Removed dead addons (13 removed). Added live tracker list from ngosang/trackerslist + XIU2 (200+ trackers, auto-updated daily) for faster torrent peer discovery. Improved magnet link generation with hybrid fetch+cache+fallback.",
@@ -9,7 +9,8 @@
   "categories": ["Movies", "TV", "Anime", "Indian"],
 
   "catalogueAddons": [
-    "https://animestream-addon.keypop3750.workers.dev/sm=https|sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,a_dub,a_sub,q_720,q_480,n_2/manifest.json"
+    "https://animestream-addon.keypop3750.workers.dev/sm=https|sk=subdl_2UBZXxejmmdfmlH4ZMyfDhpLDaSGCMIb3TelEAjjbM|tp=q_1080,a_dual,a_dub,a_sub,q_720,q_480,n_2/manifest.json",
+    "https://v3-cinemeta.strem.io/manifest.json"
   ],
 
   "streamingAddons": [
@@ -30,7 +31,6 @@
     "https://flixnest.app/flix-finder/eyJxdWFsaXR5IjpbIjEwODBwIiwiNzIwcCJdfQ/manifest.json",
     "https://flixnest.app/flix-streams/manifest.json",
     "https://autostreamtest.onrender.com/manifest.json",
-    "https://pigamer37.alwaysdata.net/manifest.json",
     "https://cinepro-addon.onrender.com/manifest.json",
     "https://2ecbbd610840-napflix.baby-beamup.club/manifest.json",
     "https://norsk-stream-hub.vercel.app/manifest.json",
