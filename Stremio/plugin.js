@@ -1,6 +1,37 @@
 (function() {
     "use strict";
 
+    // ═══════════════════════════════════════════════════════════════════
+    //  Stremio Hub v5 — Stable, Full-Featured Stremio Aggregator
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    //  WHAT THIS PLUGIN DOES:
+    //  Aggregates multiple Stremio addons into a single SkyStream plugin.
+    //  It fetches catalogs, metadata, streams, subtitles, and search
+    //  results from all configured addons and presents them unified.
+    //
+    //  HOW ADDON PRIORITY WORKS:
+    //  - `catalogueAddons` (in plugin.json) — order defines priority:
+    //    first addon = highest priority for catalog/metadata
+    //  - `streamingAddons` (in plugin.json) — order defines priority:
+    //    first addon = highest priority for streams
+    //  - For duplicate stream URLs, only the first occurrence is kept
+    //
+    //  ARCHITECTURE:
+    //  getHome()    → fetches catalogs from all catalogueAddons
+    //  search()     → searches all catalogueAddons
+    //  load()       → fetches metadata + pre-fetches streams (background)
+    //  loadStreams()→ fetches streams from all streamingAddons
+    //
+    //  COMPATIBILITY:
+    //  - SkyStream Gen 2 plugin system
+    //  - Uses native http_parallel, parse_html, solveCaptcha helpers
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ────────────────────────────────────────────────────────────────
+    //  SECTION 1: CONFIGURATION & CONSTANTS
+    // ────────────────────────────────────────────────────────────────
+
     /** Default User-Agent for HTTP requests */
     var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -77,14 +108,126 @@
     var CATALOG_PAGE_SIZE = 20;
 
     // ── Bittorrent Trackers ───────────────────────────────────────
-    // Used when converting infoHash to magnet links
-    var TRACKERS = [
+    // Fetches live tracker lists from multiple raw txt URLs (updated daily).
+    // All sources are combined, deduplicated, and cached via preferences.
+    // Minimal hardcoded fallback for emergencies only.
+    // Source: https://github.com/ngosang/trackerslist
+
+    /** Emergency fallback — only used when ALL live fetches AND cache fail */
+    var FALLBACK_TRACKERS = [
         "udp://tracker.opentrackr.org:1337/announce",
-        "udp://tracker.openbittorrent.com:6969/announce",
-        "udp://tracker.torrent.eu.org:451/announce",
-        "udp://exodus.desync.com:6969/announce",
-        "udp://public.popcorn-tracker.org:6969/announce"
+        "udp://open.demonii.com:1337/announce",
+        "udp://tracker.torrent.eu.org:451/announce"
     ];
+
+    /**
+     * Live tracker list URLs — raw txt files, auto-updated daily.
+     * Add more URLs here to pull from additional sources.
+     * Each URL should contain one tracker per line.
+     */
+    var TRACKERS_LIST_URLS = [
+        "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
+        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all.txt",
+        "https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/best.txt",
+        "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt",
+    ];
+
+    /** Active tracker list — starts as fallback, replaced by live fetch or cache */
+    var TRACKERS = FALLBACK_TRACKERS.slice();
+
+    /** Whether we've already attempted the live fetch */
+    var _trackersFetched = false;
+
+    /**
+     * Fetch ALL live tracker lists, combine them, deduplicate, and update TRACKERS.
+     * Falls back to cache first, then hardcoded fallback on any error.
+     * Called lazily — only when a torrent stream needs a magnet link.
+     */
+    function ensureTrackersLoaded() {
+        if (_trackersFetched) return;
+        _trackersFetched = true;
+
+        // Check persistent cache first
+        try {
+            var cachedRaw = getPreference("hub_trackers_list");
+            if (cachedRaw) {
+                var cached = safeJson(cachedRaw, null);
+                if (cached && Array.isArray(cached) && cached.length > 0) {
+                    TRACKERS = cached;
+                    console.log("[Hub] Trackers loaded from cache: " + TRACKERS.length + " trackers");
+                    return;
+                }
+            }
+        } catch (e) { /* Preference API may not be available */ }
+
+        // Fetch ALL live lists and combine them (non-blocking, fire-and-forget)
+        try {
+            var allParsed = [];
+            var seen = {};
+            var remaining = TRACKERS_LIST_URLS.length;
+
+            // Helper: parse body text and add to combined list
+            function addTrackersFromBody(body) {
+                var lines = body.split("\n");
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i].trim();
+                    if (!line || line.charAt(0) === "#") continue;
+                    // Only accept valid tracker protocols
+                    if (line.indexOf("udp://") === 0 || line.indexOf("http://") === 0 ||
+                        line.indexOf("https://") === 0 || line.indexOf("ws://") === 0 ||
+                        line.indexOf("wss://") === 0) {
+                        if (!seen[line]) {
+                            seen[line] = true;
+                            allParsed.push(line);
+                        }
+                    }
+                }
+            }
+
+            // Fetch each URL
+            for (var ui = 0; ui < TRACKERS_LIST_URLS.length; ui++) {
+                (function(url, idx) {
+                    http_get(url, { "User-Agent": UA }).then(function(resp) {
+                        if (resp && resp.status === 200 && resp.body) {
+                            var body = typeof resp.body === "string" ? resp.body : String(resp.body);
+                            addTrackersFromBody(body);
+                        }
+                        remaining--;
+                        // When all fetches complete (or timeout), finalize
+                        if (remaining <= 0) finalizeTrackers(allParsed);
+                    }).catch(function() {
+                        remaining--;
+                        if (remaining <= 0) finalizeTrackers(allParsed);
+                    });
+                })(TRACKERS_LIST_URLS[ui], ui);
+            }
+
+            // Safety timeout: if some fetches hang, finalize after 10s
+            setTimeout(function() {
+                if (remaining > 0) {
+                    remaining = 0;
+                    finalizeTrackers(allParsed);
+                }
+            }, 10000);
+
+        } catch (e) {
+            console.warn("[Hub] Live tracker fetch threw: " + (e.message || e) + ", using fallback");
+        }
+    }
+
+    /**
+     * Finalize the combined tracker list: cache it and update TRACKERS.
+     * @param {string[]} parsed - Combined tracker URLs from all sources
+     */
+    function finalizeTrackers(parsed) {
+        if (parsed.length > 0) {
+            TRACKERS = parsed;
+            try { setPreference("hub_trackers_list", JSON.stringify(parsed)); } catch (e) {}
+            console.log("[Hub] Trackers fetched live from " + TRACKERS_LIST_URLS.length + " source(s): " + TRACKERS.length + " trackers total");
+        } else {
+            console.warn("[Hub] All live tracker fetches returned 0 entries, using fallback (" + FALLBACK_TRACKERS.length + " trackers)");
+        }
+    }
 
 
     // ────────────────────────────────────────────────────────────────
@@ -173,11 +316,13 @@
 
     /**
      * Create a magnet link from an infoHash.
+     * Automatically triggers live tracker fetch on first call (non-blocking).
      * @param {string} hash - Torrent info hash
      * @param {string} [name] - Optional display name (used for &dn= parameter)
      * @returns {string} Full magnet URI with trackers
      */
     function magnetLink(hash, name) {
+        ensureTrackersLoaded(); // Triggers live fetch or cache check (non-blocking)
         var m = "magnet:?xt=urn:btih:" + hash + "&dn=" + encodeURIComponent(name || hash);
         // Add up to 20 tracker entries to improve peer discovery
         for (var i = 0; i < TRACKERS.length && i < 20; i++) {
