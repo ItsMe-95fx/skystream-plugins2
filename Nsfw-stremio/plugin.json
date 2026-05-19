@@ -1,0 +1,24 @@
+{
+  "packageName": "com.cookie.nsfw.nsfw-stremio",
+  "name": "🔞Nsfw-stremio",
+  "version": 4,
+  "baseUrl": "https://stremio-hub.local",
+  "description": "StremioNsfw v4 — Ultra Aggregator for NSFW content. Searches across ALL addon catalogs (fixed URL format), parallel stream fetching, built-in extractor support, rich quality parsing, subtitle normalization, DRM support, and smart caching. Aggregates from 10+ adult content addons.",
+  "authors": ["Cookie\ud83c\udf6a"],
+  "languages": ["en"],
+  "categories": ["Movies", "Anime", "Adult", "Hentai", "NSFW"],
+  "isAdult": true,
+  "addons": [
+    "https://dirty-pink.ers.pw/manifest.json",
+    "https://07b88951aaab-jaxxx-v2.baby-beamup.club/manifest.json",
+    "https://streamio-hianime.onrender.com/manifest.json",
+    "https://xclub-stremio.vercel.app/manifest.json",
+    "https://hentaistream-addon.keypop3750.workers.dev/manifest.json",
+    "https://yomi.ruka.pw/%7B%22Yomi%22%3A%22eyJ1c2VFbmdsaXNoVGl0bGVzIjp0cnVlLCJzaG93TGF0ZXN0Ijp0cnVlLCJzaG93VHJlbmRpbmciOnRydWUsInNob3dUb3AiOnRydWUsImhpZGVVbmNhY2hlZCI6ZmFsc2UsInJlc29sdXRpb25zIjpbXSwiZW5hYmxlUDJQIjp0cnVlfQ%22%7D/manifest.json",
+    "https://86f0740f37f6-hanime-stremio.baby-beamup.club/manifest.json",
+    "https://5db836ec3ef8-thepiratebay-ctl.baby-beamup.club/manifest.json"
+  ],
+  "domains": [
+    { "name": "Default Hub", "url": "https://stremio-hub.local" }
+  ]
+}
