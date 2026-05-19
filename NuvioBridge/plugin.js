@@ -2,7 +2,7 @@
 
   'use strict';
 
-  var TAG = 'NuvioBridgeV6-FIXED';
+  var TAG = 'NuvioBridgeV7';
 
   // ===========================================================================
   // 🔥 FIX #1: Only REAL TMDB API keys (removed fake sequential + dead keys)
@@ -61,14 +61,15 @@
   // ===========================================================================
   // TUNABLES
   // ===========================================================================
-  var FETCH_CODE_TIMEOUT   = 45000;   // 45s to download a provider JS file (increased)
-  var PROVIDER_TIMEOUT     = 45000;   // 45s for a provider to return streams (increased)
-  var MANIFEST_TIMEOUT     = 25000;   // 25s to fetch a manifest
+  var FETCH_CODE_TIMEOUT   = 15000;   // 15s to download a provider JS file (files are <50KB)
+  var PROVIDER_TIMEOUT     = 20000;   // 20s for a provider to return streams (most respond in 3-8s)
+  var MANIFEST_TIMEOUT     = 15000;   // 15s to fetch a manifest (JSON, small)
   var STAGGER_MS           = 200;     // 200ms stagger between provider starts
-  var STREAM_TIMEOUT       = 120000;  // 120 seconds — wait for ALL providers (increased)
+  var STREAM_TIMEOUT       = 45000;   // 45s — all providers finish within this even on slow internet
   var LOAD_TIMEOUT         = 20000;   // 20s max for loading movie/series details & episodes
-  var HOME_TIMEOUT         = 20000;   // 20s total for home categories
-  var CATEGORY_TIMEOUT     = 20000;   // 20s per category
+  var HOME_TIMEOUT         = 12000;   // 12s total for home categories (must fit within SkyStream app's plugin timeout)
+  var CATEGORY_TIMEOUT     = 10000;   // 10s per category
+  var STREAM_CACHE_TTL     = 3600000; // 1 hour cache for stream results (prevents re-fetch on navigate back)
 
   // ===========================================================================
   // USER-AGENT & HEADERS
@@ -866,59 +867,266 @@
   }
 
   // ===========================================================================
-  // HOME CATEGORIES
+  // DATE HELPERS for dynamic categories
+  // ===========================================================================
+  function getDateDaysAgo(days) {
+    var d = new Date();
+    d.setDate(d.getDate() - days);
+    return d.getFullYear() + '-' + padNum(d.getMonth() + 1) + '-' + padNum(d.getDate());
+  }
+
+  function genericFetcher(endpoint, params, mediaType) {
+    return function (p) {
+      var mergedParams = {};
+      for (var k in params) { if (params.hasOwnProperty(k)) mergedParams[k] = params[k]; }
+      mergedParams.page = p;
+      return tmdbGet(endpoint, mergedParams).then(function (d) {
+        var items = [];
+        if (d && d.results) {
+          for (var i = 0; i < d.results.length; i++) {
+            var item = tmdbToItem(d.results[i], mediaType || 'movie');
+            if (item) items.push(item);
+          }
+        }
+        return { items: items };
+      });
+    };
+  }
+
+  // ===========================================================================
+  // Multi-page fetch helper — gets up to N items by requesting multiple TMDB pages
+  // TMDB returns 20 items per page, so N=50 requires 3 pages fetched in parallel
+  // ===========================================================================
+  function fetchUpToN(endpoint, params, mediaType, n) {
+    var pagesNeeded = Math.ceil(n / 20);
+    var promises = [];
+    for (var i = 1; i <= pagesNeeded; i++) {
+      var p = {};
+      for (var k in params) { if (params.hasOwnProperty(k)) p[k] = params[k]; }
+      p.page = i;
+      promises.push(tmdbGet(endpoint, p));
+    }
+    return Promise.all(promises).then(function (results) {
+      var items = [];
+      var seen = {};
+      for (var r = 0; r < results.length; r++) {
+        if (results[r] && results[r].results) {
+          for (var j = 0; j < results[r].results.length; j++) {
+            var item = tmdbToItem(results[r].results[j], mediaType);
+            if (item && !seen[item.url]) { seen[item.url] = true; items.push(item); }
+          }
+        }
+      }
+      return { items: items.slice(0, n) };
+    });
+  }
+
+  // Helper for combined movie+TV categories (animation: fetch N from each, merge, dedupe, return N)
+  function fetchMergedUpToN(movieEndpoint, movieParams, tvEndpoint, tvParams, n) {
+    var moviePages = Math.ceil(n / 20);
+    var tvPages = Math.ceil(n / 20);
+    var promises = [];
+
+    for (var i = 1; i <= moviePages; i++) {
+      var mp = {};
+      for (var k in movieParams) { if (movieParams.hasOwnProperty(k)) mp[k] = movieParams[k]; }
+      mp.page = i;
+      promises.push(tmdbGet(movieEndpoint, mp).then(function (d) { return { type: 'movie', data: d }; }));
+    }
+    for (var i = 1; i <= tvPages; i++) {
+      var tp = {};
+      for (var k in tvParams) { if (tvParams.hasOwnProperty(k)) tp[k] = tvParams[k]; }
+      tp.page = i;
+      promises.push(tmdbGet(tvEndpoint, tp).then(function (d) { return { type: 'series', data: d }; }));
+    }
+
+    return Promise.all(promises).then(function (results) {
+      var items = [];
+      var seen = {};
+      for (var r = 0; r < results.length; r++) {
+        if (results[r].data && results[r].data.results) {
+          for (var j = 0; j < results[r].data.results.length; j++) {
+            var item = tmdbToItem(results[r].data.results[j], results[r].type);
+            if (item && !seen[item.url]) { seen[item.url] = true; items.push(item); }
+          }
+        }
+      }
+      items.sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
+      return { items: items.slice(0, n) };
+    });
+  }
+
+  // ===========================================================================
+  // HOME CATEGORIES — 9 dynamic categories updated daily via TMDB
+  // Each category fetches 50 items (3 TMDB pages) unless marked otherwise
+  // ===========================================================================
+  // Note: TMDB trending/*/week updates daily, tv/airing_today updates daily,
+  // discover/ and top_rated/ update as new data flows in (daily freshness)
   // ===========================================================================
   var HOME_CATEGORIES = [
-    { id: 'trending-week', name: 'Trending', fetcher: function (p) { return tmdbGet('trending/all/week', { page: p }).then(function (d) { var items = []; if (d && d.results) { for (var i = 0; i < d.results.length; i++) { var item = tmdbToItem(d.results[i], 'movie'); if (item) items.push(item); } } return { items: items }; }); } },
-    { id: 'trending-day', name: 'Trending Today', fetcher: function (p) { return tmdbGet('trending/all/day', { page: p }).then(function (d) { var items = []; if (d && d.results) { for (var i = 0; i < d.results.length; i++) { var item = tmdbToItem(d.results[i], 'movie'); if (item) items.push(item); } } return { items: items }; }); } },
-    { id: 'popular-movies', name: 'Popular Movies', fetcher: function (p) { return tmdbGet('movie/popular', { page: p }).then(function (d) { var items = []; if (d && d.results) { for (var i = 0; i < d.results.length; i++) { var item = tmdbToItem(d.results[i], 'movie'); if (item) items.push(item); } } return { items: items }; }); } },
-    { id: 'popular-tv', name: 'Popular TV Shows', fetcher: function (p) { return tmdbGet('tv/popular', { page: p }).then(function (d) { var items = []; if (d && d.results) { for (var i = 0; i < d.results.length; i++) { var item = tmdbToItem(d.results[i], 'series'); if (item) items.push(item); } } return { items: items }; }); } },
-    { id: 'top-rated-movies', name: 'Top Rated Movies', fetcher: function (p) { return tmdbGet('movie/top_rated', { page: p }).then(function (d) { var items = []; if (d && d.results) { for (var i = 0; i < d.results.length; i++) { var item = tmdbToItem(d.results[i], 'movie'); if (item) items.push(item); } } return { items: items }; }); } },
-    { id: 'top-rated-tv', name: 'Top Rated TV', fetcher: function (p) { return tmdbGet('tv/top_rated', { page: p }).then(function (d) { var items = []; if (d && d.results) { for (var i = 0; i < d.results.length; i++) { var item = tmdbToItem(d.results[i], 'series'); if (item) items.push(item); } } return { items: items }; }); } },
-    { id: 'airing-today', name: 'Airing Today', fetcher: function (p) { return tmdbGet('tv/airing_today', { page: p }).then(function (d) { var items = []; if (d && d.results) { for (var i = 0; i < d.results.length; i++) { var item = tmdbToItem(d.results[i], 'series'); if (item) items.push(item); } } return { items: items }; }); } },
-    { id: 'now-playing', name: 'Now Playing', fetcher: function (p) { return tmdbGet('movie/now_playing', { page: p }).then(function (d) { var items = []; if (d && d.results) { for (var i = 0; i < d.results.length; i++) { var item = tmdbToItem(d.results[i], 'movie'); if (item) items.push(item); } } return { items: items }; }); } },
+
+    // 1. Trending Movies (Hollywood + Bollywood + Tollywood across all OTT platforms)
+    { id: 'trending-movies', name: 'Trending Movies', fetcher: function (p) {
+      return fetchUpToN('trending/movie/week', {}, 'movie', 50);
+    } },
+
+    // 2. Trending Series (Hollywood + Bollywood + Tollywood across all OTT platforms)
+    { id: 'trending-series', name: 'Trending Series', fetcher: function (p) {
+      return fetchUpToN('trending/tv/week', {}, 'series', 50);
+    } },
+
+    // 3. Airing Today (Hollywood + Bollywood + Tollywood across all OTT platforms)
+    { id: 'airing-today', name: 'Airing Today', fetcher: function (p) {
+      return fetchUpToN('tv/airing_today', {}, 'series', 50);
+    } },
+
+    // 4. Trending Asian Drama (Korean + Chinese + Japanese)
+    // Uses discover/tv with Drama genre 18 and Asian language filter (pipe | confirmed by TMDB staff)
+    // Excludes animation genre 16 to prevent anime leaking into drama results
+    { id: 'trending-asian-drama', name: 'Trending Asian Drama', fetcher: function (p) {
+      return fetchUpToN('discover/tv', {
+        with_genres: '18',
+        without_genres: '16',
+        with_original_language: 'ko|zh|ja',
+        sort_by: 'popularity.desc'
+      }, 'series', 50);
+    } },
+
+    // 5. Top Rated Movies (Hollywood + Bollywood + Tollywood across all OTT platforms)
+    { id: 'top-rated-movies', name: 'Top Rated Movies', fetcher: function (p) {
+      return fetchUpToN('movie/top_rated', {}, 'movie', 50);
+    } },
+
+    // 6. Top Rated Series (Hollywood + Bollywood + Tollywood across all OTT platforms)
+    { id: 'top-rated-series', name: 'Top Rated Series', fetcher: function (p) {
+      return fetchUpToN('tv/top_rated', {}, 'series', 50);
+    } },
+
+    // 7. Top Rated K-Drama (Korean + Chinese + Japanese)
+    // Uses discover/tv with Drama genre 18, Asian languages, sorted by vote average
+    // Excludes animation genre 16 to prevent anime leaking into drama results
+    { id: 'top-rated-kdrama', name: 'Top Rated K-Drama', fetcher: function (p) {
+      return fetchUpToN('discover/tv', {
+        with_genres: '18',
+        without_genres: '16',
+        with_original_language: 'ko|zh|ja',
+        sort_by: 'vote_average.desc',
+        'vote_count.gte': '50'
+      }, 'series', 50);
+    } },
+
+    // 8. Trending Anime & Animation (ALL animation: Hollywood + Anime + Chinese donghua)
+    // Genre 16 = Animation (covers ALL animation globally — Disney, Pixar, Ghibli, Toei, Tencent, etc.)
+    // Merges movies + series into a single sorted list
+    { id: 'trending-anime', name: 'Trending Anime & Animation', fetcher: function (p) {
+      return fetchMergedUpToN(
+        'discover/movie', { with_genres: '16', sort_by: 'popularity.desc' },
+        'discover/tv',   { with_genres: '16', sort_by: 'popularity.desc' },
+        50
+      );
+    } },
+
+    // 9. Popular Anime & Animation (ALL animation: Hollywood + Anime + Chinese donghua)
+    { id: 'popular-anime', name: 'Popular Anime & Animation', fetcher: function (p) {
+      return fetchMergedUpToN(
+        'discover/movie', { with_genres: '16', sort_by: 'vote_count.desc', 'vote_count.gte': '100' },
+        'discover/tv',   { with_genres: '16', sort_by: 'vote_count.desc', 'vote_count.gte': '100' },
+        50
+      );
+    } },
   ];
 
   // ===========================================================================
-  // getHome
+  // getHome — Parallel fetch with fast retry to fit within SkyStream app timeout
   // ===========================================================================
   function getHome(cb, page) {
     var pn = parseInt(page) || 1;
-    log('getHome: fetching page ' + pn + ' from TMDB...');
+    log('getHome: fetching page ' + pn + ' from TMDB (' + HOME_CATEGORIES.length + ' categories, timeout: ' + (HOME_TIMEOUT/1000) + 's)...');
 
-    var overallTimeout = setTimeout(function () {
-      warn('getHome: overall timeout reached, returning empty');
-      cb({ success: true, data: {}, page: pn });
+    var overallTimedOut = false;
+    var finalized = false;
+    var overallTimer = setTimeout(function () {
+      overallTimedOut = true;
+      finalized = true;
+      warn('getHome: overall timeout (' + (HOME_TIMEOUT/1000) + 's) reached, returning partial results');
+      buildAndReturn();
     }, HOME_TIMEOUT);
 
-    var promises = HOME_CATEGORIES.map(function (cat) {
-      return withTimeout(cat.fetcher(pn), CATEGORY_TIMEOUT, 'home:' + cat.id)
-        .then(function (result) { return { name: cat.name, items: (result && result.items) || [] }; })
-        .catch(function () { return { name: cat.name, items: [] }; });
-    });
+    var categoryResults = [];
+    var retryQueue = [];
 
-    Promise.all(promises).then(function (results) {
-      clearTimeout(overallTimeout);
+    function buildAndReturn() {
+      if (finalized) return;
+      finalized = true;
+      clearTimeout(overallTimer);
       var out = {};
       var nonEmptyCount = 0;
-      for (var i = 0; i < results.length; i++) {
-        if (results[i].items && results[i].items.length) {
-          out[results[i].name] = results[i].items;
+      for (var i = 0; i < categoryResults.length; i++) {
+        if (categoryResults[i].items && categoryResults[i].items.length) {
+          out[categoryResults[i].name] = categoryResults[i].items;
           nonEmptyCount++;
         }
       }
-      if (nonEmptyCount === 0) {
-        log('getHome: all categories empty');
-        return cb({ success: false, errorCode: 'NO_DATA', message: 'No data from TMDB' });
-      }
-      log('getHome: returning ' + nonEmptyCount + ' categories');
+      log('getHome: returning ' + nonEmptyCount + '/' + HOME_CATEGORIES.length + ' categories with data');
       cb({ success: true, data: out, page: pn });
-    }).catch(function (e) {
-      clearTimeout(overallTimeout);
-      warn('getHome error: ' + (e.message || e));
-      cb({ success: false, errorCode: 'HOME_ERROR', message: e.message || 'Error' });
+    }
+
+    // Fetch ALL categories in parallel for fastest completion
+    var mainPromises = HOME_CATEGORIES.map(function (cat) {
+      return withTimeout(cat.fetcher(pn), CATEGORY_TIMEOUT, 'home:' + cat.id)
+        .then(function (result) {
+          var items = (result && result.items) || [];
+          categoryResults.push({ name: cat.name, items: items });
+          if (!items.length) {
+            log('getHome: "' + cat.name + '" empty, queued for fast retry');
+            retryQueue.push(cat);
+          } else {
+            log('getHome: "' + cat.name + '" loaded ' + items.length + ' items');
+          }
+        })
+        .catch(function () {
+          categoryResults.push({ name: cat.name, items: [] });
+          retryQueue.push(cat);
+          warn('getHome: "' + cat.name + '" failed, queued for fast retry');
+        });
     });
+
+    Promise.all(mainPromises).then(function () {
+      if (overallTimedOut || finalized) return;
+
+      // If some categories failed, retry them immediately (still within timeout window)
+      if (retryQueue.length > 0) {
+        var remaining = HOME_TIMEOUT - (Date.now() - _getHomeStartTime);
+        if (remaining > 2000) {
+          log('getHome: retrying ' + retryQueue.length + ' failed categories (' + remaining + 'ms remaining)');
+          var retryPromises = retryQueue.map(function (cat) {
+            return withTimeout(cat.fetcher(pn), Math.min(remaining - 1000, CATEGORY_TIMEOUT), 'home-retry:' + cat.id)
+              .then(function (result) {
+                var items = (result && result.items) || [];
+                if (items.length) {
+                  for (var i = 0; i < categoryResults.length; i++) {
+                    if (categoryResults[i].name === cat.name) {
+                      categoryResults[i].items = items;
+                      log('getHome: retry "' + cat.name + '" succeeded with ' + items.length + ' items');
+                      break;
+                    }
+                  }
+                }
+              })
+              .catch(function () {});
+          });
+          return Promise.all(retryPromises).then(function () { buildAndReturn(); });
+        }
+      }
+      buildAndReturn();
+    }).catch(function () {
+      buildAndReturn();
+    });
+
+    // Track start time for remaining-time calculation
+    _getHomeStartTime = Date.now();
   }
+  var _getHomeStartTime = 0;
 
   // ===========================================================================
   // search
@@ -1643,10 +1851,57 @@
   }
 
   // ===========================================================================
-  // 🔥 FIX #11: LOAD STREAMS — Complete rewrite with better error handling
+  // STREAM RESULT CACHE — Prevents re-fetching streams on navigate back
+  // ===========================================================================
+  var _streamsCache = {};
+  var _streamsCacheTimers = {};
+
+  function getStreamCacheKey(url) {
+    try {
+      var parsed = parseNuvioUrl(url);
+      if (!parsed) return url;
+      return parsed.tmdbId + ':' + parsed.mediaType + ':' + (parsed.season || '0') + ':' + (parsed.episode || '0');
+    } catch (e) {
+      return url;
+    }
+  }
+
+  function getCachedStreams(url) {
+    var key = getStreamCacheKey(url);
+    if (_streamsCache[key]) {
+      log('loadStreams: CACHE HIT for ' + key + ' (' + _streamsCache[key].length + ' streams)');
+      return _streamsCache[key];
+    }
+    return null;
+  }
+
+  function setCachedStreams(url, streams) {
+    var key = getStreamCacheKey(url);
+    // Clear any existing TTL timer for this key
+    if (_streamsCacheTimers[key]) {
+      clearTimeout(_streamsCacheTimers[key]);
+    }
+    _streamsCache[key] = streams;
+    // Auto-expire cache after TTL
+    _streamsCacheTimers[key] = setTimeout(function () {
+      delete _streamsCache[key];
+      delete _streamsCacheTimers[key];
+    }, STREAM_CACHE_TTL);
+    log('loadStreams: cached ' + streams.length + ' streams for ' + key + ' (TTL: ' + (STREAM_CACHE_TTL/1000) + 's)');
+  }
+
+  // ===========================================================================
+  // 🔥 FIX #11: LOAD STREAMS — Complete rewrite with caching to prevent re-fetch
   // ===========================================================================
   function loadStreams(url, cb) {
     log('loadStreams: fetching ALL streams for: ' + url);
+
+    // Check cache first — if we already fetched these streams, return immediately
+    var cached = getCachedStreams(url);
+    if (cached) {
+      log('loadStreams: returning ' + cached.length + ' cached streams immediately');
+      return cb({ success: true, data: cached });
+    }
 
     // Parse the URL
     var parsed = parseNuvioUrl(url);
@@ -1685,6 +1940,11 @@
           seen[key] = true;
           uniqueStreams.push(s);
         }
+      }
+
+      // Cache the results so navigating back doesn't re-fetch
+      if (uniqueStreams.length > 0) {
+        setCachedStreams(url, uniqueStreams);
       }
 
       log('loadStreams: returning ' + uniqueStreams.length + ' unique streams from ' + providersTried + ' providers (' + providersCompleted + ' completed)');
@@ -1807,6 +2067,6 @@
   globalThis.load = load;
   globalThis.loadStreams = loadStreams;
 
-  log('NuvioBridge V6 loaded with ' + HOME_CATEGORIES.length + ' categories, ' + TMDB_KEYS.length + ' TMDB keys, ' + NUVIO_SOURCES.length + ' manifest sources');
+  log('NuvioBridge V7 loaded with ' + HOME_CATEGORIES.length + ' categories (India+Anime added), ' + TMDB_KEYS.length + ' TMDB keys, ' + NUVIO_SOURCES.length + ' manifest sources, stream caching enabled');
 
 })();
