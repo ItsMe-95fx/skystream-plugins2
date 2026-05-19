@@ -9,7 +9,7 @@
   "categories": ["Movies", "TV", "Anime", "Indian"],
 
   "catalogueAddons": [
-    "https://v3-cinemeta.strem.io/manifest.json"
+    "https://indian-regional-catalog.vercel.app/eyJjYXRhbG9ncyI6WyJ0ZSIsImhpIiwidGVfc2VyaWVzIiwiaGlfc2VyaWVzIiwib3R0X3JlbGVhc2VzIl0sImluY2x1ZGVUaGVhdHJpY2FsIjp0cnVlfQ==/manifest.json"
   ],
 
   "streamingAddons": [
