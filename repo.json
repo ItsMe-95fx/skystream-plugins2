@@ -1,7 +1,7 @@
 {
-  "name": "Cookie's - 🍪",
-  "packageName": "dev.Cookie.repo",
-  "description": "plugin repository",
+  "name": "Few Cookie's 🍪",
+  "packageName": "dev.cookie.repo",
+  "description": "Few Plugins To Watch Anything From Anywhere",
   "manifestVersion": 1,
   "pluginLists": [
     "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/plugins.json"
