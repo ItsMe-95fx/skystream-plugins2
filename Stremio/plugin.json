@@ -1,9 +1,9 @@
 {
-	"packageName": "dev.cookie.onlytorrents",
-	"name": "OnlyTorrents-🧲",
+	"packageName": "dev.cookie.stremio",
+	"name": "Stremio http-streams",
 	"version": 1,
 	"baseUrl": "https://stremio-hub.local",
-	"description": "Always choose streams with high seeders(👥🌱), and low file sizes, For smooth torrent streaming, you need high-speed internet (50-100 Mbps+).",
+	"description": "Stream content from Stremio HTTP addons. It strips away all other sources and delivers clean, direct streams.",
 	"authors": ["Cookie\ud83c\udf6a"],
 	"languages": ["en", "hi", "te", "ta", "ml", "kn", "bn"],
 	"categories": ["Movies", "TV", "Anime", "Indian"],
@@ -34,4 +34,3 @@
 
   ]
 }
-  
