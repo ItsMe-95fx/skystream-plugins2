@@ -1,9 +1,9 @@
 {
   "packageName": "com.cookie.nuvio-bridge-v6",
   "name": "NuvioBridge",
-  "version": 7,
+  "version": 1,
   "baseUrl": "https://skystream-local",
-  "description": "NuvioBridge v7 — Fixed: all seasons/episodes load for 8+ season series, 60s timeout, staggered TMDB season calls, dead key auto-retry, backdrop poster fallback.",
+  "description": "NuvioBridge Supports all nuvio providers, 60-second streaming timeout helps reduce server load, prevent idle connections, and improve overall system stability and performance.",
   "authors": ["Cookie🍪"],
   "languages": ["en", "hi", "ta", "te", "ml", "ja", "ko", "zh", "bn", "mr", "gu", "pa", "kn", "fr", "de", "es", "pt", "ar", "tr"],
   "categories": ["Movie", "TvSeries", "Anime", "Cartoon"],
