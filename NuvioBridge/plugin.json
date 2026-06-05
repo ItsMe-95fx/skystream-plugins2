@@ -8,18 +8,10 @@
   "languages": ["en", "hi", "ta", "te", "ml", "ja", "ko", "zh", "bn", "mr", "gu", "pa", "kn", "fr", "de", "es", "pt", "ar", "tr"],
   "categories": ["Movie", "TvSeries", "Anime", "Cartoon"],
   "nuvioManifests": [
-    "https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
     "https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json",
-    "https://raw.githubusercontent.com/phisher98/phisher-nuvio-providers/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
     "https://raw.githubusercontent.com/michat88/nuvio-providers/refs/heads/main/manifest.json",
-    "https://raw.githubusercontent.com/mooncrown04/nuviotr/refs/heads/main/manifest.json",
     "https://raw.githubusercontent.com/Abinanthankv/NuvioRepo/refs/heads/master/manifest.json",
-    "https://raw.githubusercontent.com/PirateZoro9/nuvio-kabir-providers/refs/heads/main/manifest.json",
-    "https://raw.githubusercontent.com/hihihihihiiray/plugins/refs/heads/main/manifest.json",
-    "https://raw.githubusercontent.com/nvmindl/nuvio-providers/refs/heads/main/manifest.json",
-    "https://raw.githubusercontent.com/SexyNinja/Nuvio-Provider/refs/heads/main/manifest.json",
-    "https://raw.githubusercontent.com/KingLuffy24/nuvio-providers/refs/heads/main/manifest.json",
-    "https://raw.githubusercontent.com/ang3lyunus/nuvio-providers/refs/heads/main/manifest.json",
-    "https://raw.githubusercontent.com/iberiaimm/nuvio-providers/refs/heads/main/manifest.json"
+    "https://raw.githubusercontent.com/mooncrown04/nuviotr/refs/heads/main/manifest.json"
   ]
 }
