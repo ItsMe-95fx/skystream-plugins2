@@ -1,14 +1,14 @@
 {
-	"packageName": "com.nsfw.stremio.livestreamio",
-	"name": "NSFW Stremio",
-	"version": 2,
+	"packageName": "com.stremio.livestreamio",
+	"name": "Live Sports & Channels ",
+	"version": 1,
 	"baseUrl": "https://aggregator.local",
 	"description": "For Live streams.",
 	"authors": ["Cookie🍪"],
 	"languages": ["en"],
 	"categories": ["LiveTV", "Sports"],
 	"addons": [
-		"https://stremverse1.alwaysdata.net/manifest.json",
-		"https://sports.highfly.dev/manifest.json"
+		"https://sports.highfly.dev/manifest.json",
+		"https://watchio-addon.pages.dev/manifest.json?genres=Animation%2CClassic%2CFamily%2CKids%2CLifestyle%2CMovies%2CMusic%2CScience%2CSeries%2CSports"
 	]
 }
