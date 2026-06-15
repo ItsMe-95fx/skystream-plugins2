@@ -1,0 +1,14 @@
+{
+	"packageName": "com.nsfw.stremio.livestreamio",
+	"name": "NSFW Stremio",
+	"version": 2,
+	"baseUrl": "https://aggregator.local",
+	"description": "For Live streams.",
+	"authors": ["Cookie🍪"],
+	"languages": ["en"],
+	"categories": ["LiveTV", "Sports"],
+	"addons": [
+		"https://stremverse1.alwaysdata.net/manifest.json",
+		"https://sports.highfly.dev/manifest.json"
+	]
+}
