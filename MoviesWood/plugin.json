@@ -1,0 +1,22 @@
+{
+	"packageName": "com.movieswood.plugin",
+	"name": "MoviesWood",
+	"version": 2,
+	"baseUrl": "https://movieswood.cloud",
+	"description": "Watch 2026, 2025 Movies, All Movies, Dubbed Movies & Webseries in HD. Multi-source with anti-bot protection.",
+	"authors": ["MoviesWood Team"],
+	"languages": ["en"],
+	"supportedTypes": ["movie", "series"],
+	"iconUrl": "https://movieswood.cloud/favicon.ico",
+	"hasHomePage": true,
+	"hasChromecast": false,
+	"requiresLogin": false,
+	"isNsfw": false,
+	"categories": ["Movies", "TV Series"],
+	"domains": [
+		{
+			"name": "movieswood.cloud",
+			"url": "https://movieswood.cloud"
+		}
+	]
+}
