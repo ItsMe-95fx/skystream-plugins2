@@ -301,29 +301,58 @@
 		};
 		if (!html || html.length < 200) return result;
 
-		// Title
+		// Title — try multiple patterns
 		var m = html.match(/<h1 class="movie-title">([\s\S]*?)<\/h1>/i);
-		if (m) result.title = decode(m[1].trim());
-		if (!result.title) {
-			m = html.match(/<title>([\s\S]*?)<\/title>/i);
-			if (m) result.title = decode(m[1].replace(/- MoviesWood/i, "").trim());
+		if (!m) m = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+		if (!m) m = html.match(/<title>([\s\S]*?)<\/title>/i);
+		if (m) {
+			result.title = decode(m[1].replace(/- MoviesWood/i, "").trim());
+			result.title = result.title.replace(/<[^>]+>/g, "").trim();
 		}
 
 		// Poster
 		m = html.match(/<div class="movie-poster">[\s\S]*?<img[^>]+src="([^"]+)"/i);
 		if (m) result.posterUrl = m[1];
 
-		// Year from meta tags
-		m = html.match(/<span class="meta-tag">[^]*?(\d{4})[^]*?<\/span>/i);
+		// Year — try multiple patterns
+		m = html.match(/<span class="meta-tag">[^<]*(\d{4})[^<]*<\/span>/i);
+		if (!m) m = html.match(/Release[^:]*:\s*(\d{4})/i);
+		if (!m) m = html.match(/<span>(19\d{2}|20\d{2})<\/span>/);
 		if (m) result.year = parseInt(m[1]);
 
-		// Score
+		// Score — try multiple patterns
 		m = html.match(/<span class="meta-tag">⭐\s*([\d.]+)/i);
-		if (m) result.score = parseFloat(m[1]);
+		if (!m) m = html.match(/⭐\s*([\d.]+)/);
+		if (!m) m = html.match(/IMDB[^:]*:\s*([\d.]+)/i);
+		if (!m) m = html.match(/rating[^:]*:\s*([\d.]+)/i);
+		if (m) {
+			var rv = parseFloat(m[1]);
+			if (!isNaN(rv) && rv <= 10) result.score = rv;
+		}
 
-		// Description
+		// Description — try multiple patterns
 		m = html.match(/<div class="movie-overview">([\s\S]*?)<\/div>/i);
-		if (m) result.description = decode(m[1].trim());
+		if (!m) m = html.match(/<meta\s+name="description"\s+content="([^"]+)"/i);
+		if (!m)
+			m = html.match(
+				/<div[^>]*(?:summary|synopsis|plot|story)[^>]*>([\s\S]*?)<\/div>/i,
+			);
+		if (!m) {
+			// Try to get description from any large text block near the poster
+			var descSection = html.match(/movie-overview[\s\S]{0,200}?<\/div>/i);
+			if (descSection) {
+				m = descSection[0].match(/>([\s\S]*?)<\/div>/);
+			}
+		}
+		if (m) {
+			var desc = decode(m[1].trim());
+			// Clean up common junk
+			desc = desc
+				.replace(/<[^>]+>/g, "")
+				.replace(/\s+/g, " ")
+				.trim();
+			if (desc.length > 20) result.description = desc;
+		}
 
 		// Download files — match all dl-btn links on the page
 		var dlMatches = html.match(
@@ -358,14 +387,11 @@
 	}
 
 	// ---- Resolve rating.php page to get actual CDN URL ----
+	// Uses fetchFast to keep within app time limits
 	async function resolveRatingUrl(ratingUrl) {
 		try {
-			var res = await fetchURL(ratingUrl, {
-				referer: getBase() + "/telly/",
-				timeout: 15000,
-				retries: 1,
-			});
-			if (!res.body || res.body.length < 200) return null;
+			var res = await fetchFast(ratingUrl, getBase() + "/telly/");
+			if (!res || !res.body || res.body.length < 200) return null;
 
 			// The CDN URL is in data-href attribute of download button
 			var m = res.body.match(/data-href="([^"]+)"/i);
@@ -385,7 +411,6 @@
 
 			return null;
 		} catch (e) {
-			err("resolveRatingUrl:", e.message);
 			return null;
 		}
 	}
@@ -586,14 +611,57 @@
 		}
 	}
 
+	// ---- Fast fetch for load (8s timeout, 1 retry) ----
+	async function fetchFast(url, referer) {
+		var uas = [
+			getUA(),
+			"Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+			"Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)",
+		];
+		for (var attempt = 0; attempt < 2; attempt++) {
+			try {
+				var headers = {
+					"User-Agent": uas[attempt % uas.length],
+					Accept:
+						"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+					"Accept-Language": "en-US,en;q=0.5",
+					Referer: referer || getBase() + "/",
+					DNT: "1",
+				};
+				var res = await Promise.race([
+					http_get(url, headers),
+					new Promise(function (_, rej) {
+						setTimeout(function () {
+							rej(new Error("Timeout"));
+						}, 8000);
+					}),
+				]);
+				if (!res) continue;
+				var body = res.body || "";
+				var code = res.status || res.statusCode || 0;
+				if (code >= 200 && code < 400 && body.length >= 200) {
+					return { body: body, status: code };
+				}
+				if (code === 503 && body.indexOf("cf-browser") !== -1) {
+					await sleep(1000 + Math.random() * 500);
+					continue;
+				}
+				if (attempt === 0) await sleep(1500 + Math.random() * 500);
+			} catch (e) {
+				if (attempt === 0) await sleep(1000 + Math.random() * 500);
+			}
+		}
+		return null;
+	}
+
 	// ---- load ----
 	async function load(url, cb) {
 		try {
 			var base = getBase();
 			log("Load: " + url.substring(0, 100));
 
-			var res = await fetchURL(url, { referer: base + "/telly/" });
-			if (!res.body || res.body.length < 200) {
+			var res = await fetchFast(url, base + "/telly/");
+			if (!res) {
 				cb({
 					success: false,
 					errorCode: "LOAD_ERROR",
@@ -628,7 +696,6 @@
 			var episodes = [];
 
 			if (detail.files.length > 0) {
-				// Store file data as JSON for loadStreams
 				var fileData = detail.files.map(function (f) {
 					return {
 						name: f.name,
@@ -646,7 +713,6 @@
 					}),
 				);
 			} else {
-				// No files found - try the page URL as fallback
 				episodes.push(
 					new Episode({
 						name: "Play Movie",
