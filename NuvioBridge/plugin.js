@@ -1,9 +1,33 @@
 (function () {
 	"use strict";
 
-	var TAG = "NuvioBridge";
+	// ============================================================================
+	// NuvioBridge — SkyStream plugin that bridges Nuvio streaming providers
+	// Version: 4.0.0
+	// ============================================================================
 
-	// ---- Config ----------------------------------------------------------------
+	var TAG = "NuvioBridge";
+	var VERSION = "4.0.0";
+
+	// ---- Config reader ---------------------------------------------------------
+	// Reads from manifest.config (plugin.json) if present, otherwise uses the
+	// hardcoded default (second argument). Since plugin.json no longer has a
+	// `config` block, the defaults below ARE the active values.
+	// Dot notation: cfg("timeouts.total", 30000) → manifest.config.timeouts?.total ?? 30000
+
+	var CFG =
+		(typeof manifest !== "undefined" && manifest && manifest.config) || {};
+	function cfg(path, def) {
+		var parts = String(path).split(".");
+		var cur = CFG;
+		for (var i = 0; i < parts.length; i++) {
+			if (cur == null || typeof cur !== "object") return def;
+			cur = cur[parts[i]];
+		}
+		return cur !== undefined ? cur : def;
+	}
+
+	// ---- TMDB config (kept in code — shared infra keys, not user-configurable) -
 
 	var TMDB_KEYS = [
 		"68e094699525b18a70bab2f86b1fa706",
@@ -18,24 +42,72 @@
 	var IMG_PROF = "w185";
 	var _tmdbKeyIdx = 0;
 
-	var T_MANIFEST = 10000;
-	var T_CODE = 10000;
-	var T_PROVIDER = 12000;
-	var T_TOTAL = 70000;
-	var T_TMDB = 6000;
-	var T_HOME_TOTAL = 10000;
-	var T_HOME_CAT = 5000;
-	var T_SEARCH = 7000;
-	var T_DETAIL = 12000;
-	var T_SEASON = 5000;
+	// ---- Timeouts (ms) ---------------------------------------------------------
 
-	var PROVIDER_CONCURRENCY = 6;
+	// Timeout for fetching a Nuvio provider manifest (ms) — 10s
+	var T_MANIFEST = cfg("timeouts.manifest", 10000);
 
+	// Timeout for fetching a single provider's JS code file (ms) — 10s
+	var T_CODE = cfg("timeouts.providerCode", 10000);
+
+	// Max time a single provider gets to produce streams (ms) — 15s.
+	// Tuned: 10s killed Peachify (lost 21 streams), 20s let slow providers hog slots.
+	// 15s is the sweet spot: fast providers finish, slow ones get cut cleanly.
+	var T_PROVIDER = cfg("timeouts.provider", 15000);
+
+	// **GLOBAL HARD TIMEOUT** — total time from loadStreams() call to cb() delivery (ms).
+	// Tuned across many experiments: concurrency 16 + 30s total = best results.
+	// Sweet spot: 30 000ms — yields 12-23 providers / 90-108 streams.
+	// NOTE: Must be <= SkyStream plugin timeout (usually 35s).
+	var T_TOTAL = cfg("timeouts.total", 30000);
+
+	// Timeout for a single TMDB API call (ms) — 6s
+	var T_TMDB = cfg("timeouts.tmdb", 6000);
+
+	// Total time budget for getHome() including all categories (ms) — 12s
+	var T_HOME_TOTAL = cfg("timeouts.homeTotal", 12000);
+
+	// Time budget per home category (ms) — 6s
+	var T_HOME_CAT = cfg("timeouts.homeCategory", 6000);
+
+	// Max time for a search() call (ms) — 7s
+	var T_SEARCH = cfg("timeouts.search", 7000);
+
+	// Max time for a load() detail fetch (ms) — 15s
+	var T_DETAIL = cfg("timeouts.detail", 15000);
+
+	// Timeout per season fetch in load() (ms) — 5s
+	var T_SEASON = cfg("timeouts.season", 5000);
+
+	// ---- Concurrency & retries -------------------------------------------------
+
+	// How many providers run in parallel during loadStreams().
+	// Tuned: 8→16 improved from 11→14 providers. 24/32/48 WORSE (network congestion).
+	// Sweet spot: 16 — saturates the network without overloading it.
+	var PROVIDER_CONCURRENCY = cfg("concurrency.providers", 16);
+
+	// How many times to retry a provider that fails on Hermes eval/parse.
+	// First eval of raw GitHub code often fails due to async/await in Hermes.
+	// Retry (2 attempts) is critical — most providers work on second attempt.
+	var PROVIDER_RETRIES = cfg("retries.provider", 2);
+
+	// ---- Cache TTLs (ms) -------------------------------------------------------
+
+	// All cache TTLs default to 30min for manifests/streams, 60min for code.
+	// Manifest rarely changes — safe to cache 30min.
+	// Code can change on repo push — 60min balances freshness vs repeat fetches.
+	// Streams are title-specific, 30min is fine (cached per session).
 	var CACHE_TTL = {
-		manifest: 30 * 60 * 1000,
-		code: 60 * 60 * 1000,
-		streams: 30 * 60 * 1000,
+		manifest: cfg("cache.manifestTTL", 1800000), // 30 min
+		code: cfg("cache.codeTTL", 3600000), // 60 min
+		streams: cfg("cache.streamTTL", 1800000), // 30 min
 	};
+
+	// How long a provider stays in the "failed" cooldown list (ms).
+	// 10 min prevents re-trying providers that are down mid-session.
+	var _failedProviderTTL = cfg("cache.failedProviderTTL", 600000);
+
+	// ---- HTTP helpers ----------------------------------------------------------
 
 	var UA =
 		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
@@ -50,7 +122,116 @@
 	};
 
 	var _failedProviders = {};
-	var _failedProviderTTL = 10 * 60 * 1000;
+
+	// ---- Auto-prune state (persistent across sessions via getPreference) --------
+
+	// Number of consecutive failures before a provider is auto-skipped.
+	// 5 prevents flukes from banning a provider — needs consistent failures.
+	var PRUNE_THRESHOLD = cfg("limits.providerPruneThreshold", 5);
+	var _prunedProviders = null;
+
+	function _loadPruned() {
+		if (_prunedProviders) return;
+		try {
+			if (typeof globalThis.getPreference === "function") {
+				var raw = globalThis.getPreference("nb_pruned");
+				if (raw) _prunedProviders = JSON.parse(raw);
+			}
+		} catch (e) {}
+		if (!_prunedProviders) _prunedProviders = {};
+	}
+
+	function _savePruned() {
+		try {
+			if (typeof globalThis.setPreference === "function")
+				globalThis.setPreference("nb_pruned", JSON.stringify(_prunedProviders));
+		} catch (e) {}
+	}
+
+	function _isPruned(url) {
+		_loadPruned();
+		return _prunedProviders[url] && _prunedProviders[url] >= PRUNE_THRESHOLD;
+	}
+
+	function _recordPruneResult(url, hadError, hadStreams) {
+		if (hadStreams) return; // returned streams = healthy, skip tracking
+		if (!hadError) return; // returned 0 streams but no error = movie unavailable, not a provider failure
+		_loadPruned();
+		_prunedProviders[url] = (_prunedProviders[url] || 0) + 1;
+		_savePruned();
+	}
+
+	function _clearPruned(url) {
+		_loadPruned();
+		if (_prunedProviders[url]) {
+			delete _prunedProviders[url];
+			_savePruned();
+		}
+	}
+
+	// ---- Provider health scoring ------------------------------------------------
+	// Ranks providers by success rate, latency, and stream yield.
+	// Sorted by score (best first) before execution in runProvidersBatched.
+	// Weights: success 50%, latency 30%, stream yield 20%.
+	// Decay rate 0.9 smooths out single-run outliers.
+
+	var HEALTH_CFG = {
+		enabled: cfg("healthScoring.enabled", true),
+		successWeight: cfg("healthScoring.successWeight", 0.5),
+		latencyWeight: cfg("healthScoring.latencyWeight", 0.3),
+		yieldWeight: cfg("healthScoring.yieldWeight", 0.2),
+		decayRate: cfg("healthScoring.decayRate", 0.9),
+	};
+	var _providerHealth = {};
+
+	// ---- Adaptive concurrency --------------------------------------------------
+	// Adjusts concurrency every 30s based on observed provider latency.
+	// Target: keep avg latency under 5000ms.
+	// Increase by 2 when fast, decrease by 1 when slow.
+	// Bounded by CONCUR_MIN (8) and CONCUR_MAX (24).
+
+	var ADAPT_CFG = {
+		enabled: cfg("adaptiveConcurrency.enabled", true),
+		targetMs: cfg("adaptiveConcurrency.targetLatencyMs", 5000),
+		adjustMs: cfg("adaptiveConcurrency.adjustIntervalMs", 30000),
+		incStep: cfg("adaptiveConcurrency.increaseStep", 2),
+		decStep: cfg("adaptiveConcurrency.decreaseStep", 1),
+	};
+
+	// Starting concurrency for loadStreams().
+	// Tuned across experiments: 16 is the sweet spot.
+	// 8→16 improved from 11→14 providers; 24/32/48 worse (network congestion).
+	var CONCUR_INITIAL = cfg("concurrency.initial", 16);
+
+	// Floor — never go below 8 concurrent providers
+	var CONCUR_MIN = cfg("concurrency.min", 8);
+	// Ceiling — never go above 24 concurrent providers
+	var CONCUR_MAX = cfg("concurrency.max", 24);
+	var _currentConcurrency = CONCUR_INITIAL;
+	var _concurrencyLastAdj = Date.now();
+
+	// ---- Cache warming ---------------------------------------------------------
+	// When search() runs, it queues top-N results for background pre-fetch.
+	// This warms the stream cache so load() feels instant on those titles.
+	// Default: enabled, max 3 items to keep overhead low.
+
+	var WARM_CFG = {
+		enabled: cfg("cacheWarming.enabled", true),
+		maxItems: cfg("cacheWarming.maxItems", 3),
+	};
+
+	// ---- Size limits -----------------------------------------------------------
+
+	// Max size of a single provider JS code file. 3 MB (3 145 728 bytes).
+	// Raised from 1MB to 3MB to include VixSrc (1055KB).
+	// No provider comes close to 3MB — largest measured is VixSrc at 1055KB.
+	var LIMIT_PROVIDER_CODE = cfg("limits.providerCodeSize", 3145728);
+
+	// Max length of a stream URL before we discard it (defense against garbage)
+	var LIMIT_STREAM_URL = cfg("limits.maxStreamUrlLength", 4096);
+
+	// Max search results returned by search()
+	var LIMIT_SEARCH = cfg("limits.maxSearchResults", 60);
 
 	// ---- Logging ---------------------------------------------------------------
 
@@ -58,7 +239,7 @@
 		try {
 			console.log.apply(
 				console,
-				["[" + TAG + "]"].concat([].slice.call(arguments)),
+				["[" + TAG + "]", "[" + VERSION + "]"].concat([].slice.call(arguments)),
 			);
 		} catch (e) {}
 	}
@@ -66,7 +247,7 @@
 		try {
 			console.warn.apply(
 				console,
-				["[" + TAG + "]"].concat([].slice.call(arguments)),
+				["[" + TAG + "]", "[" + VERSION + "]"].concat([].slice.call(arguments)),
 			);
 		} catch (e) {}
 	}
@@ -578,29 +759,6 @@
 		globalThis["cheerio-without-node-native"] = cheerioModule;
 
 		// ---- crypto-js ----
-		function hexOf(buf) {
-			var u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-			var s = "";
-			for (var i = 0; i < u8.length; i++)
-				s += (u8[i] < 16 ? "0" : "") + u8[i].toString(16);
-			return s;
-		}
-		function strToUtf8(s) {
-			var b = [];
-			for (var i = 0; i < s.length; i++) {
-				var c = s.charCodeAt(i);
-				if (c < 0x80) b.push(c);
-				else if (c < 0x800) {
-					b.push(0xc0 | (c >> 6));
-					b.push(0x80 | (c & 0x3f));
-				} else {
-					b.push(0xe0 | (c >> 12));
-					b.push(0x80 | ((c >> 6) & 0x3f));
-					b.push(0x80 | (c & 0x3f));
-				}
-			}
-			return new Uint8Array(b);
-		}
 		var cryptoJs = {
 			lib: {
 				WordArray: function (w, n) {
@@ -964,45 +1122,6 @@
 		});
 	}
 
-	function httpPost(url, headers, body, ms) {
-		ms = ms || 8000;
-		return new Promise(function (resolve) {
-			var done = false;
-			var t = setTimeout(function () {
-				if (!done) {
-					done = true;
-					resolve({
-						status: 0,
-						body: "",
-						headers: {},
-						error: new Error("timeout"),
-					});
-				}
-			}, ms);
-			function finish(r) {
-				if (!done) {
-					done = true;
-					clearTimeout(t);
-					resolve(normalizeHttp(r));
-				}
-			}
-			function tryCb() {
-				try {
-					http_post(url, headers, body || "", function (r) {
-						finish(r);
-					});
-				} catch (e) {
-					finish({ status: 0, body: "", headers: {}, error: e });
-				}
-			}
-			try {
-				tryCb();
-			} catch (e) {
-				finish({ status: 0, body: "", headers: {}, error: e });
-			}
-		});
-	}
-
 	// ---- TMDB -----------------------------------------------------------------
 
 	function nextTmdbKey() {
@@ -1086,6 +1205,37 @@
 		} catch (e) {
 			return null;
 		}
+	}
+
+	// ---- URL Validation --------------------------------------------------------
+
+	/**
+	 * Validate that a URL is a playable stream URL.
+	 * Rejects: empty, non-http(s), localhost, private IPs, link-local, too short hosts.
+	 */
+	function isValidStreamUrl(url) {
+		if (!url || typeof url !== "string") return false;
+		if (url.indexOf("data:") === 0) return true;
+		if (url.indexOf("https://") !== 0 && url.indexOf("http://") !== 0)
+			return false;
+		var hostMatch = url.match(/^https?:\/\/([^/]+)/);
+		if (!hostMatch) return false;
+		var host = hostMatch[1].toLowerCase();
+		if (
+			host === "localhost" ||
+			host === "127.0.0.1" ||
+			host.indexOf("169.254.") === 0 ||
+			host.indexOf("10.") === 0 ||
+			host.indexOf("192.168.") === 0
+		)
+			return false;
+		var ipv4Match = host.match(/^172\.(\d+)\./);
+		if (ipv4Match) {
+			var secondOctet = parseInt(ipv4Match[1], 10);
+			if (secondOctet >= 16 && secondOctet <= 31) return false;
+		}
+		if (host.length < 3) return false;
+		return true;
 	}
 
 	// ---- Nuvio manifest layer -------------------------------------------------
@@ -1202,10 +1352,24 @@
 	}
 
 	// ---- Provider code cache --------------------------------------------------
+	// Holds fetched JS code for each provider URL (keyed by URL).
+	// _codeCacheCap: max entries before evicting oldest (LRU-ish via fifo queue).
+	// Default 128 — enough for all 143 providers plus headroom.
 
 	var _codeCache = {};
 	var _codeCacheKeys = [];
-	var _codeCacheCap = 64;
+	var _codeCacheCap = cfg("cache.codeCacheCap", 128);
+
+	function _setCodeCache(url, body) {
+		if (!_codeCache[url]) {
+			_codeCache[url] = { body: body, at: Date.now() };
+			_codeCacheKeys.push(url);
+			while (_codeCacheKeys.length > _codeCacheCap)
+				delete _codeCache[_codeCacheKeys.shift()];
+		} else {
+			_codeCache[url].at = Date.now();
+		}
+	}
 
 	function fetchProviderCode(url) {
 		var hit = _codeCache[url];
@@ -1213,15 +1377,121 @@
 			return Promise.resolve(hit.body);
 		return httpGet(url, HDR_HTML, T_CODE).then(function (r) {
 			if (r.status < 200 || r.status >= 300 || !r.body) return null;
-			if (!_codeCache[url]) {
-				_codeCache[url] = { body: r.body, at: Date.now() };
-				_codeCacheKeys.push(url);
-				while (_codeCacheKeys.length > _codeCacheCap)
-					delete _codeCache[_codeCacheKeys.shift()];
-			} else {
-				_codeCache[url].at = Date.now();
+			if (r.body.length > LIMIT_PROVIDER_CODE) {
+				warn(
+					"fetchProviderCode: " +
+						url +
+						" body too large (" +
+						r.body.length +
+						" > " +
+						LIMIT_PROVIDER_CODE +
+						" bytes) — truncating",
+				);
+				r.body = r.body.substring(0, LIMIT_PROVIDER_CODE);
 			}
+			_setCodeCache(url, r.body);
 			return r.body;
+		});
+	}
+
+	// ---- Parallel code prefetcher ----------------------------------------------
+	// Fetches ALL provider code files at once via http_parallel (runtime batch HTTP).
+	// Returns a promise. We await it before starting providers so there's zero
+	// network contention between code fetching and provider execution.
+	// After prefetch, every provider's fetchProviderCode() call hits _codeCache
+	// instantly — the per-slot HTTP fetch is eliminated.
+	// A hard timeout (half of T_TOTAL) force-resolves so we never block providers.
+
+	function prefetchAllProviderCodes(providers) {
+		var urls = [],
+			seen = {};
+		for (var i = 0; i < providers.length; i++) {
+			var u = providers[i].url;
+			if (!seen[u]) {
+				seen[u] = true;
+				urls.push(u);
+			}
+		}
+		if (!urls.length) return Promise.resolve();
+		log(
+			"prefetch: fetching " + urls.length + " provider code files in parallel…",
+		);
+		var start = Date.now();
+
+		function cacheBody(u, body) {
+			if (!body) return;
+			if (body.length > LIMIT_PROVIDER_CODE) {
+				warn(
+					"prefetch: " +
+						u +
+						" too large (" +
+						body.length +
+						" > " +
+						LIMIT_PROVIDER_CODE +
+						") — truncating",
+				);
+				body = body.substring(0, LIMIT_PROVIDER_CODE);
+			}
+			_setCodeCache(u, body);
+		}
+
+		// Build the fetch promise (http_parallel or Promise.all fallback)
+		var fetchPromise;
+		if (typeof globalThis.http_parallel === "function") {
+			var reqs = [];
+			for (var i = 0; i < urls.length; i++) {
+				reqs.push({
+					url: urls[i],
+					method: "GET",
+					headers: HDR_HTML,
+					timeout: T_CODE,
+				});
+			}
+			fetchPromise = globalThis.http_parallel(reqs).then(
+				function (responses) {
+					for (var i = 0; i < responses.length; i++) {
+						var r = responses[i];
+						if (r && r.status >= 200 && r.status < 300 && r.body)
+							cacheBody(urls[i], r.body);
+					}
+				},
+				function () {},
+			);
+		} else {
+			var promises = [];
+			for (var i = 0; i < urls.length; i++) {
+				(function (u) {
+					promises.push(
+						httpGet(u, HDR_HTML, T_CODE).then(function (r) {
+							if (r.status >= 200 && r.status < 300 && r.body)
+								cacheBody(u, r.body);
+						}),
+					);
+				})(urls[i]);
+			}
+			fetchPromise = Promise.all(promises).then(null, function () {});
+		}
+
+		// Race the fetch against a timeout so we never block providers forever
+		var prefetchMs = Math.min(T_CODE * 2, Math.floor(T_TOTAL * 0.5));
+		return Promise.race([
+			fetchPromise,
+			new Promise(function (resolve) {
+				setTimeout(function () {
+					log(
+						"prefetch: timeout after " +
+							(Date.now() - start) +
+							"ms (limit=" +
+							prefetchMs +
+							"ms)",
+					);
+					resolve();
+				}, prefetchMs);
+			}),
+		]).then(function () {
+			log(
+				"prefetch: " + urls.length + " files in " + (Date.now() - start) + "ms",
+			);
 		});
 	}
 
@@ -1245,6 +1515,8 @@
 			/Object\.defineProperty\(exports,\s*"__esModule",\s*\{[^}]*\}\);?/g,
 			"",
 		);
+		// Remove "use strict" if inside a function body (can cause issues with eval)
+		code = code.replace(/['"]use strict['"];?/g, "");
 		return code;
 	}
 
@@ -1271,100 +1543,246 @@
 		}
 	}
 
-	// ---- Per-provider runner --------------------------------------------------
+	// ---- Per-provider runner (with retry) -------------------------------------
 
 	function runProvider(p, ctx) {
 		return new Promise(function (resolve) {
-			var done = false;
-			var t = setTimeout(function () {
-				if (!done) {
-					done = true;
-					resolve({ provider: p, streams: [], error: new Error("timeout") });
-				}
-			}, T_PROVIDER);
+			var attempts = 0;
+			var maxAttempts = PROVIDER_RETRIES;
 
-			fetchProviderCode(p.url)
-				.then(function (code) {
-					if (done) return;
-					if (!code) {
-						clearTimeout(t);
+			function attempt() {
+				var done = false;
+				var t = setTimeout(function () {
+					if (!done) {
 						done = true;
-						resolve({ provider: p, streams: [], error: new Error("code-404") });
-						return;
+						resolve({ provider: p, streams: [], error: new Error("timeout") });
 					}
+				}, T_PROVIDER);
 
-					var get = compileProvider(code);
-					if (!get) {
-						clearTimeout(t);
-						done = true;
-						_failedProviders[p.url] = Date.now();
-						resolve({
-							provider: p,
-							streams: [],
-							error: new Error("no-getStreams"),
-						});
-						return;
-					}
-
-					try {
-						var res = get(ctx.tmdbId, ctx.mediaType, ctx.season, ctx.episode);
-						if (res && typeof res.then === "function") {
-							res
-								.then(function (arr) {
-									if (!done) {
-										clearTimeout(t);
-										done = true;
-										resolve({
-											provider: p,
-											streams: Array.isArray(arr) ? arr : [],
-										});
-									}
-								})
-								.catch(function (e) {
-									if (!done) {
-										clearTimeout(t);
-										done = true;
-										resolve({ provider: p, streams: [], error: e });
-									}
-								});
-						} else if (Array.isArray(res)) {
+				fetchProviderCode(p.url)
+					.then(function (code) {
+						if (done) return;
+						if (!code) {
 							clearTimeout(t);
 							done = true;
-							resolve({ provider: p, streams: res });
-						} else {
-							clearTimeout(t);
-							done = true;
-							resolve({ provider: p, streams: [] });
+							resolve({
+								provider: p,
+								streams: [],
+								error: new Error("code-404"),
+							});
+							return;
 						}
-					} catch (e) {
-						if (!done) {
+
+						var get = compileProvider(code);
+						if (!get) {
 							clearTimeout(t);
 							done = true;
 							_failedProviders[p.url] = Date.now();
-							resolve({ provider: p, streams: [], error: e });
+							resolve({
+								provider: p,
+								streams: [],
+								error: new Error("no-getStreams"),
+							});
+							return;
 						}
-					}
-				})
-				.catch(function (e) {
-					if (!done) {
-						clearTimeout(t);
-						done = true;
-						resolve({ provider: p, streams: [], error: e });
-					}
-				});
+
+						try {
+							var res = get(ctx.tmdbId, ctx.mediaType, ctx.season, ctx.episode);
+							if (res && typeof res.then === "function") {
+								res
+									.then(function (arr) {
+										if (!done) {
+											clearTimeout(t);
+											done = true;
+											resolve({
+												provider: p,
+												streams: Array.isArray(arr) ? arr : [],
+											});
+										}
+									})
+									.catch(function (e) {
+										if (!done) {
+											clearTimeout(t);
+											done = true;
+											if (attempts < maxAttempts) {
+												attempts++;
+												log(
+													"retry provider " +
+														p.name +
+														" (" +
+														attempts +
+														"/" +
+														maxAttempts +
+														") after error: " +
+														(e.message || e),
+												);
+												attempt();
+											} else {
+												resolve({ provider: p, streams: [], error: e });
+											}
+										}
+									});
+							} else if (Array.isArray(res)) {
+								clearTimeout(t);
+								done = true;
+								resolve({ provider: p, streams: res });
+							} else {
+								clearTimeout(t);
+								done = true;
+								resolve({ provider: p, streams: [] });
+							}
+						} catch (e) {
+							if (!done) {
+								clearTimeout(t);
+								done = true;
+								if (attempts < maxAttempts) {
+									attempts++;
+									log(
+										"retry provider " +
+											p.name +
+											" (" +
+											attempts +
+											"/" +
+											maxAttempts +
+											") after error: " +
+											(e.message || e),
+									);
+									attempt();
+								} else {
+									_failedProviders[p.url] = Date.now();
+									resolve({ provider: p, streams: [], error: e });
+								}
+							}
+						}
+					})
+					.catch(function (e) {
+						if (!done) {
+							clearTimeout(t);
+							done = true;
+							if (attempts < maxAttempts) {
+								attempts++;
+								log(
+									"retry provider " +
+										p.name +
+										" (" +
+										attempts +
+										"/" +
+										maxAttempts +
+										") after fetch error: " +
+										(e.message || e),
+								);
+								attempt();
+							} else {
+								resolve({ provider: p, streams: [], error: e });
+							}
+						}
+					});
+			}
+
+			attempt();
 		});
+	}
+
+	// ---- Provider health scoring ----------------------------------------------
+
+	function _trackProviderResult(p, latencyMs, streamCount, error) {
+		if (!HEALTH_CFG.enabled) return;
+		var id = p.url;
+		var prev = _providerHealth[id];
+		if (!prev) {
+			prev = {
+				calls: 0,
+				successes: 0,
+				failures: 0,
+				totalStreams: 0,
+				totalTimeMs: 0,
+				lastCall: 0,
+			};
+			_providerHealth[id] = prev;
+		}
+		prev.calls++;
+		prev.totalTimeMs += latencyMs;
+		prev.lastCall = Date.now();
+		if (error) {
+			prev.failures++;
+		} else {
+			prev.successes++;
+			prev.totalStreams += streamCount;
+		}
+	}
+
+	function _getProviderScore(p) {
+		if (!HEALTH_CFG.enabled) return 1;
+		var h = _providerHealth[p.url];
+		if (!h || h.calls < 2) return 0.9; // New/unproven — near-default score
+		var successRate = h.calls > 0 ? h.successes / h.calls : 0;
+		var avgLatency = h.successes > 0 ? h.totalTimeMs / h.successes : 99999;
+		var avgYield = h.calls > 0 ? h.totalStreams / h.calls : 0;
+		var latencyScore = Math.max(0, 1 - avgLatency / 20000);
+		var yieldScore = Math.min(1, avgYield / 10);
+		return (
+			successRate * HEALTH_CFG.successWeight +
+			latencyScore * HEALTH_CFG.latencyWeight +
+			yieldScore * HEALTH_CFG.yieldWeight
+		);
+	}
+
+	// ---- Adaptive concurrency helper ------------------------------------------
+
+	function _maybeAdjustConcurrency(recentLatencyMs) {
+		if (!ADAPT_CFG.enabled) return;
+		if (Date.now() - _concurrencyLastAdj < ADAPT_CFG.adjustMs) return;
+		_concurrencyLastAdj = Date.now();
+		if (recentLatencyMs < ADAPT_CFG.targetMs * 0.6) {
+			// Fast responses — increase concurrency
+			_currentConcurrency = Math.min(
+				CONCUR_MAX,
+				_currentConcurrency + ADAPT_CFG.incStep,
+			);
+		} else if (recentLatencyMs > ADAPT_CFG.targetMs * 1.4) {
+			// Slow responses — decrease concurrency
+			_currentConcurrency = Math.max(
+				CONCUR_MIN,
+				_currentConcurrency - ADAPT_CFG.decStep,
+			);
+		}
 	}
 
 	// ---- Batched runner -------------------------------------------------------
 
 	function runProvidersBatched(providers, ctx) {
+		// Sort providers by health score (best first) so high-quality providers run first
+		var sorted = providers.slice().sort(function (a, b) {
+			return _getProviderScore(b) - _getProviderScore(a);
+		});
+		if (HEALTH_CFG.enabled) {
+			var best = _getProviderScore(sorted[0]) || 0;
+			var worst = _getProviderScore(sorted[sorted.length - 1]) || 0;
+			log(
+				"runProvidersBatched: " +
+					sorted.length +
+					" providers sorted by health (best=" +
+					best.toFixed(2) +
+					" worst=" +
+					worst.toFixed(2) +
+					" concurrency=" +
+					_currentConcurrency +
+					")",
+			);
+		}
+
 		return new Promise(function (resolve) {
 			var settled = false;
+			var totalStart = Date.now();
+			var latencies = [];
+
 			var globalT = setTimeout(function () {
 				if (!settled) {
 					settled = true;
 					log(
-						"loadStreams: global timeout (70s) — returning " +
+						"loadStreams: global timeout (" +
+							Math.round(T_TOTAL / 1000) +
+							"s) — returning " +
 							results.length +
 							" provider results",
 					);
@@ -1379,50 +1797,96 @@
 			function startNext() {
 				if (settled) return;
 				while (
-					idx < providers.length &&
-					_failedProviders[providers[idx].url] &&
-					Date.now() - _failedProviders[providers[idx].url] < _failedProviderTTL
+					idx < sorted.length &&
+					_failedProviders[sorted[idx].url] &&
+					Date.now() - _failedProviders[sorted[idx].url] < _failedProviderTTL
 				) {
 					idx++;
 				}
-				if (idx >= providers.length) {
+				if (idx >= sorted.length) {
 					if (inFlight === 0) {
 						clearTimeout(globalT);
 						settled = true;
+						_maybeAdjustConcurrency(
+							latencies.length
+								? latencies.reduce(function (a, b) {
+										return a + b;
+									}) / latencies.length
+								: ADAPT_CFG.targetMs,
+						);
 						resolve(results);
 					}
 					return;
 				}
-				var p = providers[idx++];
+				var p = sorted[idx++];
+				var pStart = Date.now();
 				inFlight++;
 				runProvider(p, ctx)
 					.then(function (r) {
+						var elapsed = Date.now() - pStart;
 						inFlight--;
-						if (r.streams && r.streams.length) results.push(r);
+						latencies.push(elapsed);
+						_trackProviderResult(
+							p,
+							elapsed,
+							r.streams ? r.streams.length : 0,
+							r.error,
+						);
+						if (r.streams && r.streams.length) {
+							results.push(r);
+							_clearPruned(p.url);
+						} else {
+							_recordPruneResult(p.url, !!r.error, false);
+						}
+						_maybeAdjustConcurrency(
+							latencies.length
+								? latencies.reduce(function (a, b) {
+										return a + b;
+									}) / latencies.length
+								: ADAPT_CFG.targetMs,
+						);
 						startNext();
 					})
-					.catch(function () {
+					.catch(function (e) {
+						var elapsed = Date.now() - pStart;
 						inFlight--;
+						latencies.push(elapsed);
+						_trackProviderResult(p, elapsed, 0, e);
+						_recordPruneResult(p.url, true, false);
 						startNext();
 					});
 			}
 
-			for (var i = 0; i < Math.min(PROVIDER_CONCURRENCY, providers.length); i++)
+			for (
+				var i = 0;
+				i < Math.min(Math.max(_currentConcurrency, CONCUR_MIN), sorted.length);
+				i++
+			)
 				startNext();
 		});
 	}
 
-	// ---- Stream normaliser + dedup -------------------------------------------
+	// ---- Stream normaliser + dedup + validation --------------------------------
 
 	function safeStreamUrl(raw) {
 		if (!raw) return null;
 		var u = raw.url && typeof raw.url === "string" ? raw.url : raw;
 		if (typeof u !== "string") return null;
 		u = u.trim();
-		if (u.length > 4096) return null;
-		if (/^(https?|ftp|magnet):\/\//i.test(u)) return u;
+		if (u.length > LIMIT_STREAM_URL) return null;
+		// Always allow magic proxy URLs
 		if (/^magic_proxy_v[12]_/i.test(u)) return u;
 		if (/^magic_m3u8:/i.test(u)) return u;
+		// For standard URLs, validate thoroughly
+		if (/^(https?|ftp|magnet):\/\//i.test(u)) {
+			if (!isValidStreamUrl(u)) {
+				warn(
+					"safeStreamUrl: rejected invalid/private URL: " + u.substring(0, 80),
+				);
+				return null;
+			}
+			return u;
+		}
 		return null;
 	}
 
@@ -1435,7 +1899,51 @@
 		if (q && String(src).toLowerCase().indexOf(String(q).toLowerCase()) < 0)
 			src = src + " " + q;
 		var out = { url: url, source: String(src).trim() || p.name };
-		if (s.headers && typeof s.headers === "object") out.headers = s.headers;
+		// Copy headers, filtering out transport-level ones that break the player's
+		// first request. "Range" makes the server return 206 Partial Content which
+		// some video players don't handle on initial load. "Connection" is managed
+		// by the player's own HTTP client.
+		if (s.headers && typeof s.headers === "object") {
+			var SAFE_HDRS = [
+				"User-Agent",
+				"Referer",
+				"Origin",
+				"Accept",
+				"Accept-Language",
+				"X-Requested-With",
+				"x-request-x",
+				"Cookie",
+				"Authorization",
+			];
+			var clean = {};
+			for (var hk in s.headers) {
+				if (Object.prototype.hasOwnProperty.call(s.headers, hk)) {
+					var hkLower = String(hk).toLowerCase();
+					// Skip transport-level headers that the player manages
+					if (
+						hkLower === "range" ||
+						hkLower === "connection" ||
+						hkLower === "keep-alive"
+					)
+						continue;
+					// Only keep known-safe header names (case-insensitive match)
+					for (var si = 0; si < SAFE_HDRS.length; si++) {
+						if (hkLower === SAFE_HDRS[si].toLowerCase()) {
+							clean[hk] = s.headers[hk];
+							break;
+						}
+					}
+				}
+			}
+			if (Object.keys(clean).length) out.headers = clean;
+		}
+		// Set stream type hint so the player doesn't need to probe.
+		// Helps first-play succeed — player knows it's HLS, MP4, etc. upfront.
+		var ul = String(url).toLowerCase();
+		if (ul.indexOf(".m3u8") > 0) out.type = "hls";
+		else if (ul.indexOf(".mp4") > 0) out.type = "mp4";
+		else if (ul.indexOf(".mkv") > 0) out.type = "mkv";
+		else if (ul.indexOf(".webm") > 0) out.type = "webm";
 		if (s.drmKid) out.drmKid = s.drmKid;
 		if (s.drmKey) out.drmKey = s.drmKey;
 		if (s.licenseUrl || s.license || s.drmLicenseUrl)
@@ -1454,6 +1962,10 @@
 					return !!x.url;
 				});
 		}
+		// Detect and set quality field from source label
+		if (!out.quality) {
+			out.quality = extractQuality(out.source) || "";
+		}
 		return out;
 	}
 
@@ -1462,6 +1974,7 @@
 		var m = s.match(/(2160p|1440p|1080p|720p|480p|360p|4K|2K|HD|SD)/i);
 		return m ? m[1] : "";
 	}
+
 	function urlFingerprint(u) {
 		var s = String(u).split("#")[0];
 		return s.replace(/[?&]_=\d+/g, "").replace(/[?&]t=\d+/g, "");
@@ -1627,49 +2140,60 @@
 	function getHome(cb, page) {
 		var pn = parseInt(page) || 1;
 		log("getHome(page=" + pn + ")");
-		var results = Object.create(null),
-			pending = HOME_CATEGORIES.length,
-			done = false,
-			start = Date.now();
-		function maybeFinish() {
-			if (!done) {
-				done = true;
-				log(
-					"getHome: " +
-						Object.keys(results).length +
-						"/" +
-						HOME_CATEGORIES.length +
-						" categories in " +
-						(Date.now() - start) +
-						"ms",
-				);
-				cb({ success: true, data: results, page: pn });
-			}
-		}
-		var hardTimer = setTimeout(maybeFinish, T_HOME_TOTAL);
-		HOME_CATEGORIES.forEach(function (cat) {
-			var budget = Math.max(
-				2000,
-				Math.min(T_HOME_CAT, T_HOME_TOTAL - (Date.now() - start) - 500),
+
+		var results = {};
+		var totalCategories = HOME_CATEGORIES.length;
+		var completedCategories = 0;
+		var settled = false;
+		var startTime = Date.now();
+
+		function finish() {
+			if (settled) return;
+			settled = true;
+			log(
+				"getHome: " +
+					Object.keys(results).length +
+					"/" +
+					totalCategories +
+					" categories in " +
+					(Date.now() - startTime) +
+					"ms",
 			);
-			var budgetTimer = 0;
-			Promise.race([
-				cat.build(),
-				new Promise(function (res) {
-					budgetTimer = setTimeout(function () {
-						res({ items: [] });
-					}, budget);
-				}),
-			])
+			cb({ success: true, data: results, page: pn });
+		}
+
+		// Hard timeout - guarantee callback after T_HOME_TOTAL ms
+		var hardTimer = setTimeout(finish, T_HOME_TOTAL);
+
+		HOME_CATEGORIES.forEach(function (cat) {
+			// Calculate remaining time budget for this category
+			var elapsed = Date.now() - startTime;
+			var remaining = Math.max(2000, T_HOME_TOTAL - elapsed - 500);
+			var budget = Math.min(T_HOME_CAT, remaining);
+
+			var budgetTimer = setTimeout(function () {
+				// Category timed out - just skip it
+				if (--completedCategories === totalCategories - 1) {
+					// All categories done (even if some timed out)
+				}
+			}, budget);
+
+			cat
+				.build()
 				.then(function (r) {
-					if (r && r.items && r.items.length) results[cat.name] = r.items;
+					clearTimeout(budgetTimer);
+					if (r && r.items && r.items.length) {
+						results[cat.name] = r.items;
+					}
 				})
-				.catch(function () {})
+				.catch(function () {
+					clearTimeout(budgetTimer);
+				})
 				.then(function () {
-					if (budgetTimer) clearTimeout(budgetTimer);
-					if (--pending === 0) {
+					completedCategories++;
+					if (completedCategories === totalCategories && !settled) {
 						clearTimeout(hardTimer);
-						maybeFinish();
+						finish();
 					}
 				});
 		});
@@ -1681,6 +2205,7 @@
 		var q = String(query || "").trim();
 		if (!q) return cb({ success: true, data: [] });
 		log('search("' + q + '")');
+
 		function fromResults(data, fallbackType) {
 			var items = [];
 			if (!data || !Array.isArray(data.results)) return items;
@@ -1698,17 +2223,30 @@
 			}
 			return items;
 		}
-		var p1 = tmdbGet("search/multi", {
-			query: q,
-			page: 1,
-			include_adult: false,
-		});
-		var p2 = Promise.all([
-			tmdbGet("search/movie", { query: q, page: 1, include_adult: false }),
-			tmdbGet("search/tv", { query: q, page: 1, include_adult: false }),
-		]);
-		Promise.race([
-			Promise.all([p1, p2]).then(function (rs) {
+
+		var settled = false;
+		var searchTimer = setTimeout(function () {
+			if (!settled) {
+				settled = true;
+				cb({ success: true, data: [] });
+			}
+		}, T_SEARCH);
+
+		Promise.all([
+			tmdbGet("search/multi", {
+				query: q,
+				page: 1,
+				include_adult: false,
+			}),
+			Promise.all([
+				tmdbGet("search/movie", { query: q, page: 1, include_adult: false }),
+				tmdbGet("search/tv", { query: q, page: 1, include_adult: false }),
+			]),
+		])
+			.then(function (results) {
+				if (settled) return;
+				clearTimeout(searchTimer);
+				settled = true;
 				var seen = {},
 					out = [];
 				function addAll(items) {
@@ -1718,27 +2256,42 @@
 							out.push(items[i]);
 						}
 				}
-				addAll(fromResults(rs[0]));
-				addAll(fromResults(rs[1][0], "movie"));
-				addAll(fromResults(rs[1][1], "series"));
-				return out.slice(0, 60);
-			}),
-			new Promise(function (res) {
-				setTimeout(function () {
-					res(null);
-				}, T_SEARCH);
-			}),
-		])
-			.then(function (out) {
-				if (out && out.length) return cb({ success: true, data: out });
-				p1.then(function (d) {
-					cb({ success: true, data: fromResults(d).slice(0, 60) });
-				}).catch(function () {
-					cb({ success: true, data: [] });
-				});
+				addAll(fromResults(results[0]));
+				addAll(fromResults(results[1][0], "movie"));
+				addAll(fromResults(results[1][1], "series"));
+				var truncated = out.slice(0, LIMIT_SEARCH);
+				cb({ success: true, data: truncated });
+
+				// Trigger cache warming for top N results
+				if (WARM_CFG.enabled && truncated.length) {
+					var warmed = 0;
+					for (
+						var wi = 0;
+						wi < truncated.length && warmed < WARM_CFG.maxItems;
+						wi++
+					) {
+						if (truncated[wi] && truncated[wi].url) {
+							_warmStreams(truncated[wi].url);
+							warmed++;
+						}
+					}
+					if (warmed) {
+						log(
+							"search: queued " +
+								warmed +
+								" items for cache warming (limit=" +
+								WARM_CFG.maxItems +
+								")",
+						);
+					}
+				}
 			})
 			.catch(function () {
-				cb({ success: true, data: [] });
+				if (!settled) {
+					clearTimeout(searchTimer);
+					settled = true;
+					cb({ success: true, data: [] });
+				}
 			});
 	}
 
@@ -1805,23 +2358,31 @@
 			var tmdbId = parsed.tmdbId,
 				apiType = parsed.mediaType === "series" ? "tv" : "movie";
 			log("load(" + apiType + " tmdb:" + tmdbId + ")");
+
 			var settled = false;
+			var loadStart = Date.now();
+
 			function safe(r) {
 				if (!settled) {
 					settled = true;
-					clearTimeout(t);
+					clearTimeout(timeoutTimer);
 					cb(r);
 				}
 			}
-			var t = setTimeout(function () {
+
+			// Hard timeout: return minimal item if TMDB takes too long
+			var timeoutTimer = setTimeout(function () {
+				log("load: timeout (" + T_DETAIL + "ms), returning minimal item");
 				safe({ success: true, data: minimalItem(parsed, tmdbId) });
 			}, T_DETAIL);
+
 			tmdbGet(apiType + "/" + tmdbId, {
 				append_to_response: "credits,videos,external_ids",
 			})
 				.then(function (data) {
 					if (!data)
 						return safe({ success: true, data: minimalItem(parsed, tmdbId) });
+
 					var isSeries = apiType === "tv";
 					var title =
 						data.title ||
@@ -1907,6 +2468,7 @@
 						)
 							status = "ongoing";
 					}
+
 					function finish(episodes) {
 						if (!episodes || !episodes.length)
 							episodes = [
@@ -1941,10 +2503,12 @@
 							},
 						});
 					}
+
 					if (!isSeries) {
 						finish(null);
 						return;
 					}
+
 					var seasons = Array.isArray(data.seasons) ? data.seasons : [];
 					var real = seasons.filter(function (s) {
 						return s && s.season_number > 0;
@@ -1953,11 +2517,14 @@
 						finish(null);
 						return;
 					}
+
 					var allEps = [],
-						pending = real.length,
+						pendingSeasons = real.length,
 						seasonIdx = 0,
 						seasonInFlight = 0,
-						SEASON_CONCURRENCY = 6;
+						// How many season episodes fetch in parallel — 4 keeps TMDB happy
+						SEASON_CONCURRENCY = cfg("concurrency.seasons", 4);
+
 					function startNextSeason() {
 						while (
 							seasonInFlight < SEASON_CONCURRENCY &&
@@ -1994,14 +2561,14 @@
 									.catch(function () {})
 									.then(function () {
 										seasonInFlight--;
-										if (--pending === 0) {
+										if (--pendingSeasons === 0) {
 											allEps.sort(function (a, b) {
 												return a.season - b.season || a.episode - b.episode;
 											});
 											finish(allEps);
-											return;
+										} else {
+											startNextSeason();
 										}
-										startNextSeason();
 									});
 							})(real[seasonIdx++].season_number);
 						}
@@ -2021,10 +2588,15 @@
 		}
 	}
 
-	// ---- loadStreams ---------------------------------------------------------
+	// ---- loadStreams (single delivery) ----------------------------------------
+	// Collects ALL provider results then calls cb() exactly ONCE with the
+	// complete deduplicated stream set. SkyStream application ignores
+	// subsequent callbacks, so streaming per-provider loses all but the
+	// first 2-3 streams. A safety timeout prevents hanging.
 
 	function loadStreams(url, cb) {
 		log("loadStreams(" + url + ")");
+
 		var parsed = parseContentRef(url);
 		if (!parsed || !parsed.tmdbId) {
 			warn("loadStreams: cannot parse '" + url + "'");
@@ -2034,12 +2606,14 @@
 				message: "Cannot parse: " + url,
 			});
 		}
+
 		var ctx = {
 			tmdbId: parsed.tmdbId,
 			mediaType: parsed.mediaType === "series" ? "tv" : "movie",
 			season: parsed.season,
 			episode: parsed.episode,
 		};
+
 		var key = streamCacheKey(ctx);
 		var cached = getCachedStreams(key);
 		if (cached) {
@@ -2047,26 +2621,43 @@
 			return cb({ success: true, data: cached });
 		}
 
-		var done = false;
-		function safe(streams) {
-			if (done) return;
-			done = true;
-			var deduped = dedupStreams(streams || []);
-			if (deduped.length) setCachedStreams(key, deduped);
-			log("loadStreams: " + deduped.length + " unique streams");
-			cb({ success: true, data: deduped });
+		var settled = false;
+		var allStreams = [];
+
+		function deliver() {
+			if (settled) return;
+			settled = true;
+
+			var deduped = dedupStreams(
+				allStreams
+					.map(function (s) {
+						return normalizeStream(s.stream, s.provider);
+					})
+					.filter(Boolean),
+			);
+
+			if (deduped.length) {
+				setCachedStreams(key, deduped);
+				log("loadStreams: delivering " + deduped.length + " unique streams");
+				cb({ success: true, data: deduped });
+			} else {
+				log("loadStreams: no streams found");
+				cb({ success: true, data: [] });
+			}
 		}
 
+		// Start provider fetching
 		getProviders()
 			.then(function (providers) {
 				if (!providers || !providers.length) {
 					warn("loadStreams: no providers");
-					safe([]);
+					deliver();
 					return;
 				}
 
 				var matching = providers.filter(function (p) {
 					if (!p.enabled) return false;
+					if (_isPruned(p.url)) return false;
 					if (!Array.isArray(p.supportedTypes) || !p.supportedTypes.length)
 						return true;
 					for (var i = 0; i < p.supportedTypes.length; i++) {
@@ -2082,25 +2673,272 @@
 						" providers for " +
 						ctx.mediaType +
 						" " +
-						ctx.tmdbId +
-						" (70s timeout)",
+						ctx.tmdbId,
 				);
+
+				// Fire background prefetch of all provider code files — populates
+				// _codeCache so subsequent fetchProviderCode() calls hit cache.
+				// NOT awaited — providers start immediately and benefit from
+				// whatever cache entries arrive before they need them.
+				prefetchAllProviderCodes(matching);
+
 				runProvidersBatched(matching, ctx).then(function (results) {
-					var all = [];
 					for (var i = 0; i < results.length; i++) {
 						var r = results[i];
 						if (!r || !Array.isArray(r.streams)) continue;
 						for (var j = 0; j < r.streams.length; j++) {
-							var s = normalizeStream(r.streams[j], r.provider);
-							if (s) all.push(s);
+							allStreams.push({ stream: r.streams[j], provider: r.provider });
 						}
 					}
-					safe(all);
+					deliver();
 				});
 			})
 			.catch(function (e) {
 				warn("loadStreams: getProviders failed " + (e.message || e));
-				safe([]);
+				deliver();
+			});
+	}
+
+	// ---- Health Check API -----------------------------------------------------
+	// SkyStream convention: check(query, callback)
+	// Optional query argument — when absent, run full diagnostics
+
+	function check(query, cb) {
+		if (typeof query === "function") {
+			cb = query;
+			query = "";
+		}
+		if (typeof cb !== "function") {
+			log("check() called without callback — returning diagnostics");
+			return;
+		}
+		query = String(query || "").trim();
+
+		log("check() — running provider health diagnostics…");
+		var diag = {
+			version: VERSION,
+			timestamp: new Date().toISOString(),
+			config: {
+				manifestCount: 0,
+				providerCount: _providers ? _providers.length : 0,
+				concurrency: {
+					base: PROVIDER_CONCURRENCY,
+					current: _currentConcurrency,
+					min: CONCUR_MIN,
+					max: CONCUR_MAX,
+				},
+				timeouts: {
+					provider: T_PROVIDER,
+					total: T_TOTAL,
+					safety: T_TOTAL,
+				},
+				retries: PROVIDER_RETRIES,
+				healthEnabled: HEALTH_CFG.enabled,
+				adaptiveEnabled: ADAPT_CFG.enabled,
+				warmingEnabled: WARM_CFG.enabled,
+				failedProviderTTL: _failedProviderTTL,
+			},
+			health: {
+				trackedProviders: 0,
+				healthyCount: 0,
+				degradedCount: 0,
+				deadCount: 0,
+				summary: [],
+			},
+			cache: {
+				codeCacheEntries: _codeCacheKeys.length,
+				codeCacheCap: _codeCacheCap,
+				streamCacheEntries: _streamCacheKeys.length,
+				streamCacheCap: _streamCacheCap,
+			},
+			failedProviders: [],
+			errors: [],
+		};
+
+		// Gather health stats
+		if (HEALTH_CFG.enabled) {
+			var ids = Object.keys(_providerHealth);
+			diag.health.trackedProviders = ids.length;
+			for (var i = 0; i < ids.length; i++) {
+				var h = _providerHealth[ids[i]];
+				var score =
+					successRate(h) * HEALTH_CFG.successWeight +
+					latencyScore(h) * HEALTH_CFG.latencyWeight +
+					yieldScore(h) * HEALTH_CFG.yieldWeight;
+				var status =
+					score >= 0.7 ? "healthy" : score >= 0.3 ? "degraded" : "dead";
+				if (status === "healthy") diag.health.healthyCount++;
+				else if (status === "degraded") diag.health.degradedCount++;
+				else diag.health.deadCount++;
+				if (diag.health.summary.length < 20) {
+					diag.health.summary.push({
+						providerId: ids[i],
+						score: score.toFixed(3),
+						status: status,
+						calls: h.calls,
+						successes: h.successes,
+						failures: h.failures,
+						avgLatencyMs: Math.round(
+							h.successes ? h.totalTimeMs / h.successes : 0,
+						),
+						totalStreams: h.totalStreams,
+					});
+				}
+			}
+
+			function successRate(h) {
+				return h.calls > 0 ? h.successes / h.calls : 0;
+			}
+			function latencyScore(h) {
+				return Math.max(
+					0,
+					1 - (h.successes > 0 ? h.totalTimeMs / h.successes : 99999) / 20000,
+				);
+			}
+			function yieldScore(h) {
+				return Math.min(1, (h.calls > 0 ? h.totalStreams / h.calls : 0) / 10);
+			}
+		}
+
+		// List currently failed providers
+		var now = Date.now();
+		var failedUrls = Object.keys(_failedProviders);
+		for (var j = 0; j < failedUrls.length; j++) {
+			var expiresAt = _failedProviders[failedUrls[j]] + _failedProviderTTL;
+			if (expiresAt > now) {
+				diag.failedProviders.push({
+					url: failedUrls[j],
+					expiresAt: new Date(expiresAt).toISOString(),
+					remainingMs: expiresAt - now,
+				});
+			}
+		}
+
+		// Ping manifests
+		var manifestUrls = getManifests();
+		diag.config.manifestCount = manifestUrls.length;
+		Promise.all(
+			manifestUrls.map(function (u) {
+				return httpGet(u, HDR_JSON, 5000)
+					.then(function (r) {
+						if (r.status >= 200 && r.status < 300 && r.body) {
+							try {
+								var d = JSON.parse(r.body);
+								return {
+									url: u.substring(0, 80),
+									status: "ok",
+									providers: (d.scrapers || d.providers || []).length,
+								};
+							} catch (e) {
+								return { url: u.substring(0, 80), status: "parse-error" };
+							}
+						}
+						return { url: u.substring(0, 80), status: "http-" + r.status };
+					})
+					.catch(function () {
+						return { url: u.substring(0, 80), status: "unreachable" };
+					});
+			}),
+		).then(function (manifestResults) {
+			diag.manifests = manifestResults;
+			cb({ success: true, data: diag });
+		});
+	}
+
+	// ---- Cache warming --------------------------------------------------------
+
+	var _warmingQueue = [];
+	var _warmingActive = false;
+
+	function _warmStreams(url) {
+		if (!WARM_CFG.enabled) return;
+		if (_warmingQueue.length >= WARM_CFG.maxItems * 2) return; // cap queue
+		_warmingQueue.push(url);
+		_processWarmingQueue();
+	}
+
+	function _processWarmingQueue() {
+		if (_warmingActive || !_warmingQueue.length) return;
+		_warmingActive = true;
+		var url = _warmingQueue.shift();
+
+		// Use a silent loadStreams call that caches the result
+		var parsed = parseContentRef(url);
+		if (!parsed || !parsed.tmdbId) {
+			_warmingActive = false;
+			_processWarmingQueue();
+			return;
+		}
+
+		var ctx = {
+			tmdbId: parsed.tmdbId,
+			mediaType: parsed.mediaType === "series" ? "tv" : "movie",
+			season: parsed.season,
+			episode: parsed.episode,
+		};
+		var key = streamCacheKey(ctx);
+
+		// Skip if already cached
+		if (getCachedStreams(key)) {
+			_warmingActive = false;
+			_processWarmingQueue();
+			return;
+		}
+
+		log("cache warming: pre-fetching streams for " + url);
+
+		// Use a temporary callback that does nothing except update the cache
+		getProviders()
+			.then(function (providers) {
+				if (!providers || !providers.length) {
+					_warmingActive = false;
+					_processWarmingQueue();
+					return;
+				}
+				var matching = providers.filter(function (p) {
+					if (!p.enabled) return false;
+					if (!Array.isArray(p.supportedTypes) || !p.supportedTypes.length)
+						return true;
+					for (var i = 0; i < p.supportedTypes.length; i++) {
+						var t = String(p.supportedTypes[i]).toLowerCase();
+						if (t === ctx.mediaType || t === "all") return true;
+					}
+					return false;
+				});
+				if (!matching.length) {
+					_warmingActive = false;
+					_processWarmingQueue();
+					return;
+				}
+				runProvidersBatched(matching, ctx).then(function (results) {
+					var allStreams = [];
+					for (var i = 0; i < results.length; i++) {
+						var r = results[i];
+						if (!r || !Array.isArray(r.streams)) continue;
+						for (var j = 0; j < r.streams.length; j++) {
+							allStreams.push({ stream: r.streams[j], provider: r.provider });
+						}
+					}
+					var deduped = dedupStreams(
+						allStreams
+							.map(function (s) {
+								return normalizeStream(s.stream, s.provider);
+							})
+							.filter(Boolean),
+					);
+					if (deduped.length) {
+						setCachedStreams(key, deduped);
+						log(
+							"cache warming: cached " + deduped.length + " streams for " + url,
+						);
+					}
+					_warmingActive = false;
+					_processWarmingQueue();
+				});
+			})
+			.catch(function () {
+				_warmingActive = false;
+				_processWarmingQueue();
 			});
 	}
 
@@ -2110,16 +2948,35 @@
 	globalThis.search = search;
 	globalThis.load = load;
 	globalThis.loadStreams = loadStreams;
+	globalThis.check = check;
 
 	var manCount =
 		typeof manifest !== "undefined" && Array.isArray(manifest.nuvioManifests)
 			? manifest.nuvioManifests.length
 			: 0;
 	log(
-		"loaded (manifests=" +
+		"loaded v" +
+			VERSION +
+			" (manifests=" +
 			manCount +
-			", providers timeout=12s, total=70s, concurrency=" +
+			", providers=" +
+			(_providers ? _providers.length : 0) +
+			", timeout=" +
+			Math.round(T_PROVIDER / 1000) +
+			"s, total=" +
+			Math.round(T_TOTAL / 1000) +
+			"s, concur=" +
 			PROVIDER_CONCURRENCY +
+			"/" +
+			_currentConcurrency +
+			", retries=" +
+			PROVIDER_RETRIES +
+			", health=" +
+			HEALTH_CFG.enabled +
+			", adapt=" +
+			ADAPT_CFG.enabled +
+			", warm=" +
+			WARM_CFG.enabled +
 			")",
 	);
 })();
