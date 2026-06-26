@@ -1,11 +1,11 @@
 {
-  "packageName": "com.cookie.teluguscreen",
-  "name": "TeluguScreen",
+  "packageName": "com.cookie.mkvbase",
+  "name": "mkvbase",
   "version": 1,
-  "baseUrl": "https://teluguscreen.com",
+  "baseUrl": "https://mkvbase.site",
   "description": "TeluguScreen movies and TV shows",
   "authors": [
-    "Cookie\ud83c\udf6a"
+    "Cookie🍪"
   ],
   "languages": [
     "te",
@@ -14,11 +14,5 @@
   "categories": [
     "Movies",
     "TV Shows"
-  ],
-  "domains": [
-    {
-      "name": "teluguscreen.com",
-      "url": "https://teluguscreen.com"
-    }
   ]
 }
