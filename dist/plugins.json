@@ -1,0 +1,286 @@
+[
+  {
+    "packageName": "com.stremio.livestreamio",
+    "name": "Live Sports & Channels ",
+    "version": 1,
+    "baseUrl": "https://aggregator.local",
+    "description": "For Live streams.",
+    "authors": [
+      "Cookie🍪"
+    ],
+    "languages": [
+      "en"
+    ],
+    "categories": [
+      "LiveTV",
+      "Sports"
+    ],
+    "addons": [
+      "https://sports.highfly.dev/manifest.json",
+      "https://watchio-addon.pages.dev/manifest.json?genres=Animation%2CClassic%2CFamily%2CKids%2CLifestyle%2CMovies%2CMusic%2CScience%2CSeries%2CSports"
+    ],
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/com.stremio.livestreamio.sky"
+  },
+  {
+    "packageName": "com.movieswood.plugin",
+    "name": "MoviesWood",
+    "version": 2,
+    "baseUrl": "https://movieswood.cloud",
+    "description": "Watch 2026, 2025 Movies, All Movies, Dubbed Movies & Webseries in HD. Multi-source with anti-bot protection.",
+    "authors": [
+      "MoviesWood Team"
+    ],
+    "languages": [
+      "en"
+    ],
+    "supportedTypes": [
+      "movie",
+      "series"
+    ],
+    "iconUrl": "https://movieswood.cloud/favicon.ico",
+    "hasHomePage": true,
+    "hasChromecast": false,
+    "requiresLogin": false,
+    "isNsfw": false,
+    "categories": [
+      "Movies",
+      "TV Series"
+    ],
+    "domains": [
+      {
+        "name": "movieswood.cloud",
+        "url": "https://movieswood.cloud"
+      }
+    ],
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/com.movieswood.plugin.sky"
+  },
+  {
+    "packageName": "com.cookie.moviezwap",
+    "name": "Moviezwap",
+    "version": 3,
+    "baseUrl": "https://www.moviezwap.love/",
+    "description": "Telugu & Tamil movies provider - Latest releases in multiple qualities",
+    "authors": [
+      "Cookie🍪"
+    ],
+    "languages": [
+      "te",
+      "ta",
+      "hi"
+    ],
+    "categories": [
+      "Movie",
+      "TvSeries"
+    ],
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/com.cookie.moviezwap.sky"
+  },
+  {
+    "packageName": "com.cookie.nuviobridge",
+    "name": "NuvioBridge",
+    "version": 1,
+    "baseUrl": "https://skystream-local",
+    "description": "NuvioBridge scrapes 140+ streaming providers from Nuvio manifests and delivers deduplicated streams with health scoring, adaptive concurrency, and cache warming",
+    "authors": [
+      "Cookie🍪"
+    ],
+    "languages": [
+      "en",
+      "hi",
+      "ta",
+      "te",
+      "ml",
+      "ja",
+      "ko",
+      "zh",
+      "bn",
+      "mr",
+      "gu",
+      "pa",
+      "kn",
+      "fr",
+      "de",
+      "es",
+      "pt",
+      "ar",
+      "tr"
+    ],
+    "categories": [
+      "Movie",
+      "TvSeries",
+      "Anime",
+      "Cartoon"
+    ],
+    "nuvioManifests": [
+      "https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json",
+      "https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
+      "https://raw.githubusercontent.com/michat88/nuvio-providers/refs/heads/main/manifest.json",
+      "https://raw.githubusercontent.com/Abinanthankv/NuvioRepo/refs/heads/master/manifest.json",
+      "https://raw.githubusercontent.com/mooncrown04/nuviotr/refs/heads/main/manifest.json"
+    ],
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/com.cookie.nuviobridge.sky"
+  },
+  {
+    "packageName": "dev.cookie.onlytorrents",
+    "name": "OnlyTorrents-🧲",
+    "version": 1,
+    "baseUrl": "https://stremio-hub.local",
+    "description": "Always choose streams with high seeders(👥🌱), and low file sizes, For smooth torrent streaming, you need high-speed internet (50-100 Mbps+).",
+    "authors": [
+      "Cookie🍪"
+    ],
+    "languages": [
+      "en",
+      "hi",
+      "te",
+      "ta",
+      "ml",
+      "kn",
+      "bn"
+    ],
+    "categories": [
+      "Movies",
+      "TV",
+      "Anime",
+      "Indian"
+    ],
+    "catalogueAddons": [
+      "https://aio.pantelx.com/%7B%22userId%22%3A%22d252298e-2ca1-4d8f-b1c5-c1e66be22d98%22%7D/manifest.json"
+    ],
+    "metaAddons": [
+      "https://v3-cinemeta.strem.io/manifest.json"
+    ],
+    "streamingAddons": [
+      "https://5a0d1888fa64-orion.baby-beamup.club/eyJhcGkiOiJWTEVMSDVCTkpSS1U4REJUSkdRODZVTjVNTkVMRkNGUyIsImxpbmtMaW1pdCI6IjEwIiwic29ydFZhbHVlIjoic3RyZWFtc2VlZHMiLCJhdWRpb2NoYW5uZWxzIjoiMiw2LDgiLCJ2aWRlb3F1YWxpdHkiOiJoZDRrLGhkMmssaGQxMDgwLGhkNzIwLHNkIiwibGlzdE9wdCI6InRvcnJlbnQiLCJkZWJyaWRzZXJ2aWNlcyI6W10sImF1ZGlvbGFuZ3VhZ2VzIjpbXSwiYWRkaXRpb25hbFBhcmFtZXRlcnMiOiIifQ/manifest.json",
+      "https://torrentsdb.com/eyJwcm92aWRlcnMiOlsieXRzIiwiZXp0diIsIjEzMzd4IiwidG9ycmVudGNzdiIsIjFsb3UiLCJueWFhIiwic2t0b3JyZW50IiwiMXRhbWlsYmxhc3RlcnMiLCIxdGFtaWxtdiIsInJhcmdiIiwia25hYmVuIiwidGhlcGlyYXRlYmF5Iiwia2lja2Fzc3RvcnJlbnRzIiwiYW5pbWV0b3NobyIsImV4dHJlbWx5bXRvcnJlbnRzIiwieWdndG9ycmVudCIsInRva3lvdG9zaG8iXSwic29ydCI6InNlZWRlcnMiLCJxdWFsaXR5ZmlsdGVyIjpbIjEwODBwIiwiNzIwcCIsIjQ4MHAiLCI0ayJdLCJsaW1pdCI6IjEwIiwic2l6ZWZpbHRlciI6IjE1MzY1In0=/manifest.json",
+      "https://filmora-production.up.railway.app/manifest.json",
+      "https://watcho3.rafaelzioneverest.workers.dev/manifest.json",
+      "https://astral-mu-two.vercel.app/manifest.json",
+      "https://thebeginningjuststarted.xyz/5f5b2c7060f6cf0a/manifest.json",
+      "https://cinnn.vercel.app/manifest.json",
+      "https://torrentclaw.com/api/stremio/eyJsYW5nIjoiZW4iLCJzb3J0Ijoic2VlZGVycyJ9/manifest.json"
+    ],
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/dev.cookie.onlytorrents.sky"
+  },
+  {
+    "packageName": "dev.cookie.stremio",
+    "name": "Stremio http-streams",
+    "version": 1,
+    "baseUrl": "https://stremio-hub.local",
+    "description": "Stream content from Stremio HTTP addons. It strips away all other sources and delivers clean, direct streams.",
+    "authors": [
+      "Cookie🍪"
+    ],
+    "languages": [
+      "en",
+      "hi",
+      "te",
+      "ta",
+      "ml",
+      "kn",
+      "bn"
+    ],
+    "categories": [
+      "Movies",
+      "TV",
+      "Anime",
+      "Indian"
+    ],
+    "catalogueAddons": [
+      "https://aio.pantelx.com/%7B%22userId%22%3A%22d252298e-2ca1-4d8f-b1c5-c1e66be22d98%22%7D/manifest.json"
+    ],
+    "metaAddons": [
+      "https://v3-cinemeta.strem.io/manifest.json"
+    ],
+    "streamingAddons": [
+      "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
+      "https://hdhub.thevolecitor.qzz.io/eyJ0b3Jib3giOiJ1bnNldCIsInF1YWxpdGllcyI6IjIxNjBwLDEwODBwLDcyMHAsNDgwcCIsInNvcnQiOiJhc2MiLCJtcSI6NSwibXAiOjEwfQ/manifest.json",
+      "https://badboysxs-morpheus.hf.space/bWIsbm0sZGYsaGgsa2gsa20sYXcsaG0/manifest.json",
+      "https://nebula.work.gd/configured/all/default/prefer-h264%2Cprefer-smaller-files%2Cprefer-direct-hosts%2Cdedupe%3Dsmart%2Cmax-size-gb%3D10/manifest.json",
+      "https://6172e63fd702-del-kdrama-series-movies.baby-beamup.club/manifest.json",
+      "https://nagare.nexioapp.org/%7B%22NexioNagare%22%3A%22eyJ1c2VFbmdsaXNoVGl0bGVzIjp0cnVlLCJwcmVmZXJEdWIiOnRydWUsInByb3ZpZGVycyI6WyJvbmV0d290aHJlZWFuaW1lIiwiYW5pem9uZSIsImFuaW1lbm9zdWIiLCJhbmltZXBhaGUiLCJnb2pvIl0sInJlc29sdXRpb25zIjpbIjEwODBwIiwiNzIwcCIsIjQ4MHAiXSwic2hvd1NlYXNvbmFsU2VyaWVzIjpmYWxzZSwic2hvd0FpcmluZ1NlcmllcyI6ZmFsc2UsInNob3dUcmVuZGluZ1NlcmllcyI6ZmFsc2UsInNob3dUb3BTZXJpZXMiOmZhbHNlLCJzaG93VHJlbmRpbmdNb3ZpZXMiOmZhbHNlLCJzaG93VG9wTW92aWVzIjpmYWxzZX0%22%7D/manifest.json",
+      "https://sword-watch.vercel.app/manifest.json",
+      "https://dev-streamz-navy.vercel.app/manifest.json"
+    ],
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/dev.cookie.stremio.sky"
+  },
+  {
+    "packageName": "com.cookie.tellybiz",
+    "name": "Tellybiz",
+    "version": 1,
+    "baseUrl": "https://tellybiz.in",
+    "description": "Watch Telugu, Dubbed, English, Bollywood, Webseries, Malayalam, and Kannada movies and TV shows",
+    "authors": [
+      "Cookie🍪"
+    ],
+    "language": "en",
+    "supportedTypes": [
+      "movie",
+      "series"
+    ],
+    "iconUrl": "https://tellybiz.in/favicon.ico",
+    "hasHomePage": true,
+    "hasChromecast": false,
+    "requiresLogin": false,
+    "isNsfw": false,
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/com.cookie.tellybiz.sky"
+  },
+  {
+    "packageName": "com.cookie.vegamovies",
+    "name": "VegaMovies",
+    "version": 1,
+    "baseUrl": "https://vegamovies.market",
+    "description": "VegaMovies - Movies, TV Shows and Web Series streaming provider with multi-server support (V-Cloud, FSL, Mega, Buzz, Pixeldrain, 10Gbps)",
+    "authors": [
+      "Cookie🍪"
+    ],
+    "languages": [
+      "hi",
+      "en"
+    ],
+    "categories": [
+      "Movies",
+      "TV",
+      "Anime"
+    ],
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/com.cookie.vegamovies.sky"
+  },
+  {
+    "packageName": "com.cookie.moviblast",
+    "name": "MovieBlast",
+    "version": 1,
+    "baseUrl": "https://app.cloud-mb.xyz",
+    "description": "MovieBlast – Telugu Movies & Series. Full API-based scraper with HMAC-signed stream URLs.",
+    "authors": [
+      "Cookie🍪"
+    ],
+    "languages": [
+      "te",
+      "en"
+    ],
+    "categories": [
+      "Movie",
+      "TvSeries"
+    ],
+    "iconUrl": "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/movieblast.png",
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/com.cookie.moviblast.sky"
+  },
+  {
+    "packageName": "com.cookie.mkvbase",
+    "name": "mkvbase",
+    "version": 1,
+    "baseUrl": "https://mkvbase.site",
+    "description": "TeluguScreen movies and TV shows",
+    "authors": [
+      "Cookie🍪"
+    ],
+    "languages": [
+      "te",
+      "en"
+    ],
+    "categories": [
+      "Movies",
+      "TV Shows"
+    ],
+    "url": "https://raw.githubusercontent.com/thegnsme/skystream-plugins/repo/dist/com.cookie.mkvbase.sky"
+  }
+]
