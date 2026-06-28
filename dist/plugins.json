@@ -90,19 +90,7 @@
       "te",
       "ml",
       "ja",
-      "ko",
-      "zh",
-      "bn",
-      "mr",
-      "gu",
-      "pa",
-      "kn",
-      "fr",
-      "de",
-      "es",
-      "pt",
-      "ar",
-      "tr"
+      "ko"
     ],
     "categories": [
       "Movie",
@@ -114,6 +102,7 @@
       "https://raw.githubusercontent.com/hihihihihiiray/nuvio-plugins/refs/heads/main/manifest.json",
       "https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json",
       "https://raw.githubusercontent.com/PirateZoro9/asura-providers/refs/heads/main/manifest.json",
+      "https://raw.githubusercontent.com/Eclipsia-Vault/eclipsia-nuvio/refs/heads/main/manifest.json",
       "https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
       "https://raw.githubusercontent.com/michat88/nuvio-providers/refs/heads/main/manifest.json",
       "https://raw.githubusercontent.com/Abinanthankv/NuvioRepo/refs/heads/master/manifest.json",
