@@ -77,7 +77,7 @@
   {
     "packageName": "com.cookie.nuviobridge",
     "name": "NuvioBridge",
-    "version": 1,
+    "version": 2,
     "baseUrl": "https://skystream-local",
     "description": "NuvioBridge scrapes 140+ streaming providers from Nuvio manifests and delivers deduplicated streams with health scoring, adaptive concurrency, and cache warming",
     "authors": [
@@ -111,6 +111,7 @@
       "Cartoon"
     ],
     "nuvioManifests": [
+      "https://raw.githubusercontent.com/hihihihihiiray/nuvio-plugins/refs/heads/main/manifest.json",
       "https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json",
       "https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
       "https://raw.githubusercontent.com/michat88/nuvio-providers/refs/heads/main/manifest.json",
