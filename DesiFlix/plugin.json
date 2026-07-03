@@ -1,0 +1,13 @@
+{
+	"packageName": "com.stremio.desiflix",
+	"name": "DesiFlix",
+	"version": 1,
+	"baseUrl": "https://wtf.local",
+	"description": "Indian daily soaps, Hindi serials, web series & movies.",
+	"authors": ["Cookie🍪"],
+	"languages": ["Hin", "Tam", "Tel", "Mal"],
+	"categories": ["Movie", "series"],
+	"addons": [
+		"https://desiflix.stremioaddon.workers.dev/manifest.json"
+	]
+}
