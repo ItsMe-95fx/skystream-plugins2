@@ -1,0 +1,13 @@
+{
+	"packageName": "com.stremio.dramayo",
+	"name": "Dramayo",
+	"version": 1,
+	"baseUrl": "https://wtf.local",
+	"description": "Ultimate NSFW aggregator for SkyStream. Searches across 10+ adult content Stremio addons including Hentai, JAV, JAVPie, Dirty Pink, XXX, Hanime, and more. Features multi-addon catalog browsing, cross-addon search with multi-word token matching, and direct stream resolution.",
+	"authors": ["Cookie🍪"],
+	"languages": ["Eng", "jap", "kor", "thai"],
+	"categories": ["asian", "drama", "kdrama"],
+	"addons": [
+		"https://dramayo.stream/eyJpbnN0YWxsSWQiOiJkZDFmZWYwNi0xNTNjLTQwMTEtODQwNy03ZTNkMmM5NmU4MDciLCJlbmFibGVkQ2F0YWxvZ3MiOlsiZHJhbWF5by1kaXNjb3ZlciIsImRyYW1heW8tZGlzY292ZXItbW92aWVzIiwiZHJhbWF5by1rb3JlYW4iLCJkcmFtYXlvLWNoaW5lc2UiLCJkcmFtYXlvLWphcGFuZXNlIiwiZHJhbWF5by10aGFpIiwiZHJhbWF5by10YWl3YW5lc2UiLCJkcmFtYXlvLWZpbGlwaW5vIiwiZHJhbWF5by1ob25na29uZyIsImRyYW1heW8ta29yZWFuLW1vdmllcyIsImRyYW1heW8tY2hpbmVzZS1tb3ZpZXMiLCJkcmFtYXlvLWphcGFuZXNlLW1vdmllcyIsImRyYW1heW8tdGhhaS1tb3ZpZXMiLCJkcmFtYXlvLXRhaXdhbmVzZS1tb3ZpZXMiLCJkcmFtYXlvLWZpbGlwaW5vLW1vdmllcyIsImRyYW1heW8taG9uZ2tvbmctbW92aWVzIl0sImhpZGVBbmltZSI6dHJ1ZSwiaGlkZU5zZnciOnRydWV9/manifest.json"
+	]
+}
