@@ -13,7 +13,8 @@
 	],
 	"metaAddons": ["https://v3-cinemeta.strem.io/manifest.json"],
 	"streamingAddons": [
-		"https://87d6a6ef6b58-webstreamrmbg-dev.baby-beamup.club/manifest.json",
+		"https://87d6a6ef6b58-webstreamrmbg-dev.baby-beamup.club/%7B%22multi%22%3A%22on%22%2C%22gu%22%3A%22on%22%2C%22hi%22%3A%22on%22%2C%22ml%22%3A%22on%22%2C%22pa%22%3A%22on%22%2C%22ta%22%3A%22on%22%2C%22te%22%3A%22on%22%2C%22includeExternalUrls%22%3A%22on%22%2C%22excludeResolution_Unknown%22%3A%22on%22%2C%22excludeResolution_144p%22%3A%22on%22%2C%22disableExtractor_youtube%22%3A%22on%22%2C%22disableExtractor_voe%22%3A%22on%22%7D/manifest.json",
+		"https://pengu.uk/%7B%22source_acermovies%22%3A%22on%22%2C%22source_4khdhub%22%3A%22on%22%2C%22source_aniwaves%22%3A%22on%22%2C%22source_moviebox%22%3A%22on%22%2C%22source_moviesdrives%22%3A%22on%22%2C%22source_allmovieland%22%3A%22on%22%2C%22source_overflix%22%3A%22on%22%2C%22source_vaplayer%22%3A%22on%22%2C%22source_vidking%22%3A%22on%22%2C%22source_animesuge%22%3A%22on%22%2C%22source_aether%22%3A%22on%22%2C%22res_2160%22%3A%22on%22%2C%22res_1080%22%3A%22on%22%2C%22res_720%22%3A%22on%22%2C%22res_480%22%3A%22on%22%2C%22res_360%22%3A%22on%22%2C%22auth_token%22%3A%22Sh_eXwRRwYXzmRoGKkN57Qs_tDD3_I7ZxEL9FNPoTlQ%22%7D/manifest.json",
 		"https://hdhub.thevolecitor.qzz.io/eyJ0b3Jib3giOiJ1bnNldCIsInF1YWxpdGllcyI6IjIxNjBwLDEwODBwLDcyMHAsNDgwcCIsInNvcnQiOiJkZXNjIn0/manifest.json",
 		"https://aiostreamsfortheweebs.midnightignite.me/stremio/8062780c-5265-40db-85bd-beadc99e3602/eyJpIjoiNTRHOHp6ZzA4c3ViVlhDQW8zNW41dz09IiwiZSI6IkVnaTYwaWNlVGZQVzBiZUFXc2tTdjZXdTEzS3ZLM2F4aXJoYk5GQk9vYzA9IiwidCI6ImEifQ/manifest.json",
 		"https://6172e63fd702-del-kdrama-series-movies.baby-beamup.club/manifest.json"
