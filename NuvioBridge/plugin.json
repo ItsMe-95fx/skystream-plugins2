@@ -1,9 +1,9 @@
 {
 	"packageName": "com.cookie.nuviobridge",
 	"name": "NuvioBridge",
-	"version": 2,
+	"version": 3,
 	"baseUrl": "https://skystream-local",
-	"description": "NuvioBridge scrapes 140+ streaming providers from Nuvio manifests and delivers deduplicated streams with health scoring, adaptive concurrency, and cache warming",
+	"description": "NuvioBridge scrapes 100+ streaming providers from Nuvio manifests and delivers deduplicated streams with health scoring, adaptive concurrency, and cache warming",
 	"authors": ["Cookie🍪"],
 	"languages": [
 		"en",
@@ -16,13 +16,9 @@
 	],
 	"categories": ["Movie", "TvSeries", "Anime", "Cartoon"],
 	"nuvioManifests": [
-		"https://raw.githubusercontent.com/hihihihihiiray/nuvio-plugins/refs/heads/main/manifest.json",
 		"https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json",
-		"https://raw.githubusercontent.com/PirateZoro9/asura-providers/refs/heads/main/manifest.json",
+		"https://raw.githubusercontent.com/hihihihihiiray/plugins/refs/heads/main/manifest.json",
 		"https://raw.githubusercontent.com/Eclipsia-Vault/eclipsia-nuvio/refs/heads/main/manifest.json",
-		"https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json",
-		"https://raw.githubusercontent.com/michat88/nuvio-providers/refs/heads/main/manifest.json",
-		"https://raw.githubusercontent.com/Abinanthankv/NuvioRepo/refs/heads/master/manifest.json",
-		"https://raw.githubusercontent.com/mooncrown04/nuviotr/refs/heads/main/manifest.json"
+		"https://raw.githubusercontent.com/PirateZoro9/asura-providers/refs/heads/main/manifest.json"
 	]
 }
