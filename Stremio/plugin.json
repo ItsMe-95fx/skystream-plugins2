@@ -1,7 +1,7 @@
 {
 	"packageName": "dev.cookie.stremio",
-	"name": "Stremio",
-	"version": 3,
+	"name": "Stremio-HTTP",
+	"version": 1,
 	"baseUrl": "https://stremio-hub.local",
 	"description": "Aggregates streaming links from Stremio HTTP addons. Fires ALL addons in parallel for maximum speed and coverage. Dynamic quality extraction, URL validation, MAGIC_PROXY for reliable playback.",
 	"authors": ["Cookie🍪"],
